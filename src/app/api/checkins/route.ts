@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase/server'
 import { createAdminClient } from '@/lib/supabase/admin'
 import { sendCheckInReceivedEmail } from '@/lib/email'
+import type { Passport, Node, CheckIn } from '@/types/database'
 
 export async function POST(request: Request) {
   const supabase = await createClient()
@@ -17,12 +18,13 @@ export async function POST(request: Request) {
   const admin = createAdminClient()
 
   // Verify passport belongs to user and is active
-  const { data: passport } = await admin
+  const { data: passportData } = await admin
     .from('passports')
     .select('id, status, expires_at, corridor_id, user_id')
     .eq('id', passportId)
     .eq('user_id', user.id)
     .single()
+  const passport = passportData as Pick<Passport, 'id' | 'status' | 'expires_at' | 'corridor_id' | 'user_id'> | null
 
   if (!passport) return NextResponse.json({ error: 'Passport not found' }, { status: 404 })
   if (passport.status !== 'active') return NextResponse.json({ error: 'Passport not active' }, { status: 403 })
@@ -31,22 +33,24 @@ export async function POST(request: Request) {
   }
 
   // Verify node belongs to this corridor
-  const { data: node } = await admin
+  const { data: nodeData } = await admin
     .from('nodes')
     .select('id, name, sequence, corridor_id')
     .eq('id', nodeId)
     .eq('corridor_id', passport.corridor_id)
     .single()
+  const node = nodeData as Pick<Node, 'id' | 'name' | 'sequence' | 'corridor_id'> | null
 
   if (!node) return NextResponse.json({ error: 'Node not in this corridor' }, { status: 400 })
 
   // Check for existing approved check-in
-  const { data: existingCheckIn } = await admin
+  const { data: existingData } = await admin
     .from('check_ins')
     .select('id, status')
     .eq('passport_id', passportId)
     .eq('node_id', nodeId)
     .maybeSingle()
+  const existingCheckIn = existingData as Pick<CheckIn, 'id' | 'status'> | null
 
   if (existingCheckIn?.status === 'approved') {
     return NextResponse.json({ error: 'Already approved' }, { status: 409 })
@@ -86,7 +90,7 @@ export async function POST(request: Request) {
     if (error || !updated) {
       return NextResponse.json({ error: 'Failed to update check-in' }, { status: 500 })
     }
-    checkInId = updated.id
+    checkInId = (updated as { id: string }).id
   } else {
     const { data: inserted, error } = await admin
       .from('check_ins')
@@ -106,15 +110,16 @@ export async function POST(request: Request) {
       console.error('Check-in insert error:', error)
       return NextResponse.json({ error: 'Failed to record check-in' }, { status: 500 })
     }
-    checkInId = inserted.id
+    checkInId = (inserted as { id: string }).id
   }
 
   // Get corridor for email
-  const { data: corridor } = await admin
+  const { data: corridorData } = await admin
     .from('corridors')
     .select('name')
     .eq('id', passport.corridor_id)
     .single()
+  const corridor = corridorData as { name: string } | null
 
   const { count: totalNodes } = await admin
     .from('nodes')
@@ -123,11 +128,12 @@ export async function POST(request: Request) {
     .eq('is_active', true)
 
   // Get profile for email
-  const { data: profile } = await admin
+  const { data: profileData } = await admin
     .from('profiles')
     .select('email, full_name')
     .eq('id', user.id)
     .single()
+  const profile = profileData as { email: string; full_name: string | null } | null
 
   sendCheckInReceivedEmail({
     to: profile?.email ?? user.email!,

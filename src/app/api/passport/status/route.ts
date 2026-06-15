@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase/server'
 import { createAdminClient } from '@/lib/supabase/admin'
+import type { Passport } from '@/types/database'
 
 export async function GET() {
   const supabase = await createClient()
@@ -8,12 +9,13 @@ export async function GET() {
 
   if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
 
-  const { data: passport } = await supabase
+  const { data: passportData } = await supabase
     .from('passports')
     .select('*')
     .eq('user_id', user.id)
     .eq('status', 'active')
     .maybeSingle()
+  const passport = passportData as Passport | null
 
   if (!passport) return NextResponse.json({ passport: null })
 

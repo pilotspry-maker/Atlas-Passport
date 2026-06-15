@@ -2,11 +2,14 @@ import { redirect, notFound } from 'next/navigation'
 import Link from 'next/link'
 import { createClient } from '@/lib/supabase/server'
 import ProofUploader from '@/components/nodes/ProofUploader'
+import type { Node } from '@/types/database'
 
 interface Props {
   params: Promise<{ nodeId: string }>
   searchParams: Promise<{ passport?: string }>
 }
+
+type NodeWithCorridorName = Node & { corridor: { name: string } | null }
 
 export default async function CheckInPage({ params, searchParams }: Props) {
   const { nodeId } = await params
@@ -18,7 +21,7 @@ export default async function CheckInPage({ params, searchParams }: Props) {
 
   if (!passportId) redirect(`/nodes/${nodeId}`)
 
-  const [{ data: node }, { data: passport }] = await Promise.all([
+  const [nodeRes, passportRes] = await Promise.all([
     supabase.from('nodes').select('*, corridor:corridors(name)').eq('id', nodeId).single(),
     supabase
       .from('passports')
@@ -28,6 +31,9 @@ export default async function CheckInPage({ params, searchParams }: Props) {
       .single(),
   ])
 
+  const node = nodeRes.data as NodeWithCorridorName | null
+  const passport = passportRes.data as { id: string; status: string; expires_at: string; corridor_id: string } | null
+
   if (!node || !passport) notFound()
 
   const isExpired = passport.status !== 'active' ||
@@ -36,16 +42,17 @@ export default async function CheckInPage({ params, searchParams }: Props) {
   if (isExpired) redirect('/passport')
 
   // Check for existing approved check-in
-  const { data: existingCheckIn } = await supabase
+  const { data: existingData } = await supabase
     .from('check_ins')
     .select('status')
     .eq('passport_id', passportId)
     .eq('node_id', nodeId)
     .maybeSingle()
+  const existingCheckIn = existingData as { status: string } | null
 
   if (existingCheckIn?.status === 'approved') redirect('/passport')
 
-  const corridorName = (node.corridor as { name: string })?.name ?? ''
+  const corridorName = node.corridor?.name ?? ''
 
   return (
     <main className="min-h-screen bg-atlas-black px-4 py-8 max-w-lg mx-auto">

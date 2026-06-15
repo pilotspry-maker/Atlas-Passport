@@ -1,10 +1,10 @@
 'use client'
 
-import { useState, useEffect } from 'react'
+import { Suspense, useState, useEffect } from 'react'
 import { useSearchParams, useRouter } from 'next/navigation'
 import Link from 'next/link'
 
-export default function ActivatePassportPage() {
+function ActivateContent() {
   const searchParams = useSearchParams()
   const router = useRouter()
   const corridorId = searchParams.get('corridor')
@@ -131,5 +131,17 @@ export default function ActivatePassportPage() {
         </button>
       </div>
     </main>
+  )
+}
+
+export default function ActivatePassportPage() {
+  return (
+    <Suspense fallback={
+      <main className="min-h-screen flex items-center justify-center">
+        <div className="text-atlas-muted text-sm">Loading...</div>
+      </main>
+    }>
+      <ActivateContent />
+    </Suspense>
   )
 }

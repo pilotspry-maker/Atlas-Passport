@@ -1,4 +1,4 @@
-import { resend, FROM } from './resend'
+import { getResend, FROM } from './resend'
 import { PassportActivatedEmail } from '../../emails/PassportActivatedEmail'
 import { CheckInReceivedEmail }   from '../../emails/CheckInReceivedEmail'
 import { CheckInApprovedEmail }   from '../../emails/CheckInApprovedEmail'
@@ -16,7 +16,7 @@ export async function sendPassportActivatedEmail(opts: {
   expiresAt: string
   totalNodes: number
 }) {
-  return resend.emails.send({
+  return getResend().emails.send({
     from: FROM,
     to: opts.to,
     subject: `Your 72 hours begin now — ${opts.corridorName}`,
@@ -35,7 +35,7 @@ export async function sendCheckInReceivedEmail(opts: {
   sequence: number
   totalNodes: number
 }) {
-  return resend.emails.send({
+  return getResend().emails.send({
     from: FROM,
     to: opts.to,
     subject: `Kaelo received your proof — ${opts.nodeName}`,
@@ -55,7 +55,7 @@ export async function sendCheckInApprovedEmail(opts: {
   totalNodes: number
   isLastNode: boolean
 }) {
-  return resend.emails.send({
+  return getResend().emails.send({
     from: FROM,
     to: opts.to,
     subject: `Stamp approved — ${opts.nodeName}`,
@@ -73,7 +73,7 @@ export async function sendCheckInRejectedEmail(opts: {
   corridorName: string
   adminNotes: string
 }) {
-  return resend.emails.send({
+  return getResend().emails.send({
     from: FROM,
     to: opts.to,
     subject: `Kaelo needs a clearer proof — ${opts.nodeName}`,
@@ -92,7 +92,7 @@ export async function sendTimerWarningEmail(opts: {
   approvedCount: number
   totalNodes: number
 }) {
-  return resend.emails.send({
+  return getResend().emails.send({
     from: FROM,
     to: opts.to,
     subject: `24 hours left on your Atlas Passport`,
@@ -110,7 +110,7 @@ export async function sendCorridorCompleteEmail(opts: {
   rewardTitle: string
   rewardCode?: string | null
 }) {
-  return resend.emails.send({
+  return getResend().emails.send({
     from: FROM,
     to: opts.to,
     subject: `You've completed the ${opts.corridorName} — your reward awaits`,

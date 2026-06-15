@@ -5,12 +5,12 @@ import CountdownTimer from '@/components/passport/CountdownTimer'
 import CorridorProgress from '@/components/passport/CorridorProgress'
 import NodeCard from '@/components/nodes/NodeCard'
 import RealtimePassportUpdater from '@/components/passport/RealtimePassportUpdater'
-import type { PassportFull } from '@/types/database'
+import type { PassportFull, Passport, Corridor, Node, CheckIn, Reward } from '@/types/database'
 
 async function getPassportData(userId: string): Promise<PassportFull | null> {
   const supabase = await createClient()
 
-  const { data: passport } = await supabase
+  const { data: passportData } = await supabase
     .from('passports')
     .select('*')
     .eq('user_id', userId)
@@ -18,16 +18,21 @@ async function getPassportData(userId: string): Promise<PassportFull | null> {
     .order('created_at', { ascending: false })
     .limit(1)
     .maybeSingle()
+  const passport = passportData as Passport | null
 
   if (!passport) return null
 
-  const [{ data: corridor }, { data: nodes }, { data: checkIns }, { data: reward }] =
-    await Promise.all([
-      supabase.from('corridors').select('*').eq('id', passport.corridor_id).single(),
-      supabase.from('nodes').select('*').eq('corridor_id', passport.corridor_id).order('sequence'),
-      supabase.from('check_ins').select('*').eq('passport_id', passport.id),
-      supabase.from('rewards').select('*').eq('corridor_id', passport.corridor_id).maybeSingle(),
-    ])
+  const [corridorRes, nodesRes, checkInsRes, rewardRes] = await Promise.all([
+    supabase.from('corridors').select('*').eq('id', passport.corridor_id).single(),
+    supabase.from('nodes').select('*').eq('corridor_id', passport.corridor_id).order('sequence'),
+    supabase.from('check_ins').select('*').eq('passport_id', passport.id),
+    supabase.from('rewards').select('*').eq('corridor_id', passport.corridor_id).maybeSingle(),
+  ])
+
+  const corridor = corridorRes.data as Corridor | null
+  const nodes = nodesRes.data as Node[] | null
+  const checkIns = checkInsRes.data as CheckIn[] | null
+  const reward = rewardRes.data as Reward | null
 
   if (!corridor || !nodes) return null
 

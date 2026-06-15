@@ -1,6 +1,7 @@
 import { redirect, notFound } from 'next/navigation'
 import Link from 'next/link'
 import { createClient } from '@/lib/supabase/server'
+import type { Corridor, Node } from '@/types/database'
 
 interface Props {
   params: Promise<{ corridorId: string }>
@@ -12,21 +13,26 @@ export default async function CorridorDetailPage({ params }: Props) {
   const { data: { user } } = await supabase.auth.getUser()
   if (!user) redirect('/auth/login')
 
-  const [{ data: corridor }, { data: nodes }, { data: reward }] = await Promise.all([
+  const [corridorRes, nodesRes, rewardRes] = await Promise.all([
     supabase.from('corridors').select('*').eq('id', corridorId).eq('is_active', true).single(),
     supabase.from('nodes').select('*').eq('corridor_id', corridorId).order('sequence'),
     supabase.from('rewards').select('title, description').eq('corridor_id', corridorId).maybeSingle(),
   ])
 
+  const corridor = corridorRes.data as Corridor | null
+  const nodes = nodesRes.data as Node[] | null
+  const reward = rewardRes.data as { title: string; description: string | null } | null
+
   if (!corridor) notFound()
 
   // Check for existing passport on this corridor
-  const { data: existingPassport } = await supabase
+  const { data: existingData } = await supabase
     .from('passports')
     .select('id, status')
     .eq('user_id', user.id)
     .eq('corridor_id', corridorId)
     .maybeSingle()
+  const existingPassport = existingData as { id: string; status: string } | null
 
   const hasActivePassport = existingPassport?.status === 'active'
   const hasCompleted = existingPassport?.status === 'complete'

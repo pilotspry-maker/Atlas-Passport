@@ -1,15 +1,10 @@
 import { NextResponse } from 'next/server'
-import { createClient } from '@/lib/supabase/server'
 import { createAdminClient } from '@/lib/supabase/admin'
+import { requireAdmin } from '@/lib/auth'
 
 export async function POST(request: Request) {
-  const supabase = await createClient()
-  const { data: { user } } = await supabase.auth.getUser()
-  if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
-
-  const { data: profile } = await supabase
-    .from('profiles').select('is_admin').eq('id', user.id).single()
-  if (!profile?.is_admin) return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
+  const auth = await requireAdmin()
+  if (auth.response) return auth.response
 
   const { name, description, city, country, is_active } = await request.json()
   if (!name?.trim() || !city?.trim()) {
@@ -19,7 +14,13 @@ export async function POST(request: Request) {
   const admin = createAdminClient()
   const { data: corridor, error } = await admin
     .from('corridors')
-    .insert({ name: name.trim(), description: description?.trim() || null, city: city.trim(), country: country?.trim() || 'US', is_active: is_active ?? true })
+    .insert({
+      name: name.trim(),
+      description: description?.trim() || null,
+      city: city.trim(),
+      country: country?.trim() || 'US',
+      is_active: is_active ?? true,
+    })
     .select()
     .single()
 

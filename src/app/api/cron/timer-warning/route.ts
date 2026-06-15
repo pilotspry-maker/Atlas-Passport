@@ -5,6 +5,15 @@ import { sendTimerWarningEmail } from '@/lib/email'
 // Vercel cron: 0 * * * * (every hour)
 // Protected by CRON_SECRET header
 
+type PassportRow = {
+  id: string
+  corridor_id: string
+  expires_at: string
+  warning_sent_at: string | null
+  corridor: { name: string } | null
+  profile: { email: string; full_name: string | null } | null
+}
+
 export async function GET(request: Request) {
   const authHeader = request.headers.get('authorization')
   if (authHeader !== `Bearer ${process.env.CRON_SECRET}`) {
@@ -17,7 +26,7 @@ export async function GET(request: Request) {
   const twentyThreeHoursFromNow = new Date(Date.now() + 23 * 60 * 60 * 1000).toISOString()
   const twentyFiveHoursFromNow = new Date(Date.now() + 25 * 60 * 60 * 1000).toISOString()
 
-  const { data: passports } = await admin
+  const { data: passportsData } = await admin
     .from('passports')
     .select(`
       *,
@@ -29,6 +38,8 @@ export async function GET(request: Request) {
     .gte('expires_at', twentyThreeHoursFromNow)
     .lte('expires_at', twentyFiveHoursFromNow)
 
+  const passports = passportsData as PassportRow[] | null
+
   if (!passports?.length) {
     return NextResponse.json({ sent: 0 })
   }
@@ -37,8 +48,8 @@ export async function GET(request: Request) {
   const errors: string[] = []
 
   for (const passport of passports) {
-    const corridor = passport.corridor as { name: string } | null
-    const profile = passport.profile as { email: string; full_name: string | null } | null
+    const corridor = passport.corridor
+    const profile = passport.profile
 
     if (!profile?.email) continue
 

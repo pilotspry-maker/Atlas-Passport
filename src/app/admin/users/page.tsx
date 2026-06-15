@@ -4,19 +4,30 @@ import { formatDate } from '@/lib/utils'
 
 export const revalidate = 0
 
+type UserRow = {
+  id: string
+  email: string
+  full_name: string | null
+  is_admin: boolean
+  created_at: string
+  passports: Array<{
+    id: string
+    status: string
+    activated_at: string
+    expires_at: string
+    corridor: { name: string } | null
+  }>
+}
+
 export default async function AdminUsersPage() {
   const admin = createAdminClient()
 
-  const { data: users } = await admin
+  const { data } = await admin
     .from('profiles')
-    .select(`
-      *,
-      passports(
-        id, status, activated_at, expires_at, corridor_id,
-        corridor:corridors(name)
-      )
-    `)
+    .select('id, email, full_name, is_admin, created_at, passports(id, status, activated_at, expires_at, corridor:corridors(name))')
     .order('created_at', { ascending: false })
+
+  const users = data as unknown as UserRow[] | null
 
   return (
     <div>
@@ -28,15 +39,8 @@ export default async function AdminUsersPage() {
 
       <div className="space-y-3">
         {users?.map(user => {
-          const passports = user.passports as Array<{
-            id: string
-            status: string
-            activated_at: string
-            expires_at: string
-            corridor: { name: string } | null
-          }>
-          const activePassport = passports?.find(p => p.status === 'active')
-          const completedCount = passports?.filter(p => p.status === 'complete').length ?? 0
+          const activePassport = user.passports?.find(p => p.status === 'active')
+          const completedCount = user.passports?.filter(p => p.status === 'complete').length ?? 0
 
           return (
             <div key={user.id} className="border border-atlas-border bg-atlas-card p-5">

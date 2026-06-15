@@ -1,10 +1,13 @@
 import { redirect, notFound } from 'next/navigation'
 import Link from 'next/link'
 import { createClient } from '@/lib/supabase/server'
+import type { Node, CheckIn } from '@/types/database'
 
 interface Props {
   params: Promise<{ nodeId: string }>
 }
+
+type NodeWithCorridor = Node & { corridor: { id: string; name: string; city: string } }
 
 export default async function NodeDetailPage({ params }: Props) {
   const { nodeId } = await params
@@ -12,25 +15,27 @@ export default async function NodeDetailPage({ params }: Props) {
   const { data: { user } } = await supabase.auth.getUser()
   if (!user) redirect('/auth/login')
 
-  const { data: node } = await supabase
+  const { data: nodeData } = await supabase
     .from('nodes')
     .select('*, corridor:corridors(*)')
     .eq('id', nodeId)
     .single()
+  const node = nodeData as NodeWithCorridor | null
 
   if (!node) notFound()
 
-  const corridor = node.corridor as { id: string; name: string; city: string }
+  const corridor = node.corridor
 
   // Find user's active passport for this corridor
-  const { data: passport } = await supabase
+  const { data: passportData } = await supabase
     .from('passports')
     .select('id, status, expires_at')
     .eq('user_id', user.id)
     .eq('corridor_id', corridor.id)
     .maybeSingle()
+  const passport = passportData as { id: string; status: string; expires_at: string } | null
 
-  const checkIn = passport
+  const checkInData = passport
     ? await supabase
         .from('check_ins')
         .select('*')
@@ -39,6 +44,7 @@ export default async function NodeDetailPage({ params }: Props) {
         .maybeSingle()
         .then(r => r.data)
     : null
+  const checkIn = checkInData as CheckIn | null
 
   const isPassportActive = passport?.status === 'active' &&
     new Date(passport.expires_at).getTime() > Date.now()

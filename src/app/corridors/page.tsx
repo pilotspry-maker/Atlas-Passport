@@ -1,6 +1,9 @@
 import { redirect } from 'next/navigation'
 import Link from 'next/link'
 import { createClient } from '@/lib/supabase/server'
+import type { Corridor } from '@/types/database'
+
+type CorridorRow = Corridor & { nodes: { count: number }[] }
 
 export default async function CorridorsPage() {
   const supabase = await createClient()
@@ -8,25 +11,29 @@ export default async function CorridorsPage() {
   if (!user) redirect('/auth/login')
 
   // If user has an active passport, go there
-  const { data: activePassport } = await supabase
+  const { data: activePassportData } = await supabase
     .from('passports')
     .select('id')
     .eq('user_id', user.id)
     .eq('status', 'active')
     .maybeSingle()
+  const activePassport = activePassportData as { id: string } | null
 
   if (activePassport) redirect('/passport')
 
-  const { data: corridors } = await supabase
+  const { data } = await supabase
     .from('corridors')
     .select('*, nodes(count)')
     .eq('is_active', true)
     .order('created_at')
 
-  const { data: previousPassports } = await supabase
+  const corridors = data as unknown as CorridorRow[] | null
+
+  const { data: prevData } = await supabase
     .from('passports')
     .select('corridor_id, status')
     .eq('user_id', user.id)
+  const previousPassports = prevData as { corridor_id: string; status: string }[] | null
 
   const completedCorridorIds = new Set(
     previousPassports?.filter(p => p.status === 'complete').map(p => p.corridor_id) ?? []

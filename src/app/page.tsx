@@ -8,12 +8,13 @@ export default async function HomePage() {
 
   if (user) {
     // Check for active passport
-    const { data: passport } = await supabase
+    const { data: passportData } = await supabase
       .from('passports')
       .select('id, status')
       .eq('user_id', user.id)
       .eq('status', 'active')
       .maybeSingle()
+    const passport = passportData as { id: string } | null
 
     if (passport) redirect('/passport')
     redirect('/corridors')

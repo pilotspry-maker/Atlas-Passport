@@ -1,16 +1,24 @@
 import Link from 'next/link'
 import { createAdminClient } from '@/lib/supabase/admin'
 import AdminNav from '@/components/admin/AdminNav'
+import type { Corridor } from '@/types/database'
+
+type CorridorRow = Corridor & {
+  nodes: { count: number }[]
+  rewards: { title: string }[]
+}
 
 export const revalidate = 0
 
 export default async function AdminCorridorsPage() {
   const admin = createAdminClient()
 
-  const { data: corridors } = await admin
+  const { data } = await admin
     .from('corridors')
     .select('*, nodes(count), rewards(title)')
     .order('created_at')
+
+  const corridors = data as unknown as CorridorRow[] | null
 
   return (
     <div>

@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase/server'
 import { createAdminClient } from '@/lib/supabase/admin'
+import type { Passport } from '@/types/database'
 
 const ALLOWED_TYPES = ['image/jpeg', 'image/png', 'image/webp', 'image/heic', 'image/heif']
 const MAX_SIZE = 10 * 1024 * 1024 // 10MB
@@ -25,12 +26,13 @@ export async function POST(request: Request) {
   }
 
   // Verify passport belongs to user and is active
-  const { data: passport } = await supabase
+  const { data: passportData } = await supabase
     .from('passports')
     .select('id, status, expires_at')
     .eq('id', passportId)
     .eq('user_id', user.id)
     .single()
+  const passport = passportData as Pick<Passport, 'id' | 'status' | 'expires_at'> | null
 
   if (!passport || passport.status !== 'active') {
     return NextResponse.json({ error: 'Passport not active' }, { status: 403 })

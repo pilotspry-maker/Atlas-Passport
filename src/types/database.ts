@@ -32,6 +32,7 @@ export interface Database {
           is_admin?: boolean
           updated_at?: string
         }
+        Relationships: []
       }
       corridors: {
         Row: {
@@ -62,6 +63,7 @@ export interface Database {
           cover_image?: string | null
           is_active?: boolean
         }
+        Relationships: []
       }
       nodes: {
         Row: {
@@ -100,6 +102,15 @@ export interface Database {
           longitude?: number | null
           is_active?: boolean
         }
+        Relationships: [
+          {
+            foreignKeyName: "nodes_corridor_id_fkey"
+            columns: ["corridor_id"]
+            isOneToOne: false
+            referencedRelation: "corridors"
+            referencedColumns: ["id"]
+          }
+        ]
       }
       passports: {
         Row: {
@@ -132,6 +143,22 @@ export interface Database {
           warning_sent_at?: string | null
           reward_claimed?: boolean
         }
+        Relationships: [
+          {
+            foreignKeyName: "passports_user_id_fkey"
+            columns: ["user_id"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "passports_corridor_id_fkey"
+            columns: ["corridor_id"]
+            isOneToOne: false
+            referencedRelation: "corridors"
+            referencedColumns: ["id"]
+          }
+        ]
       }
       check_ins: {
         Row: {
@@ -166,7 +193,27 @@ export interface Database {
           admin_notes?: string | null
           reviewed_by?: string | null
           reviewed_at?: string | null
+          proof_url?: string
+          proof_storage_path?: string
+          notes?: string | null
+          submitted_at?: string
         }
+        Relationships: [
+          {
+            foreignKeyName: "check_ins_passport_id_fkey"
+            columns: ["passport_id"]
+            isOneToOne: false
+            referencedRelation: "passports"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "check_ins_node_id_fkey"
+            columns: ["node_id"]
+            isOneToOne: false
+            referencedRelation: "nodes"
+            referencedColumns: ["id"]
+          }
+        ]
       }
       rewards: {
         Row: {
@@ -196,11 +243,21 @@ export interface Database {
           redemption_url?: string | null
           image_url?: string | null
         }
+        Relationships: [
+          {
+            foreignKeyName: "rewards_corridor_id_fkey"
+            columns: ["corridor_id"]
+            isOneToOne: false
+            referencedRelation: "corridors"
+            referencedColumns: ["id"]
+          }
+        ]
       }
     }
     Views: Record<never, never>
     Functions: Record<never, never>
     Enums: Record<never, never>
+    CompositeTypes: Record<never, never>
   }
 }
 
@@ -212,10 +269,8 @@ export type Passport = Database['public']['Tables']['passports']['Row']
 export type CheckIn  = Database['public']['Tables']['check_ins']['Row']
 export type Reward   = Database['public']['Tables']['rewards']['Row']
 
-// Extended/joined types used across the app
-export type NodeWithCheckIn = Node & {
-  check_in: CheckIn | null
-}
+// Extended/joined types
+export type NodeWithCheckIn = Node & { check_in: CheckIn | null }
 
 export type PassportFull = Passport & {
   corridor: Corridor

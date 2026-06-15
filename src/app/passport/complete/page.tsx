@@ -1,13 +1,20 @@
 import { redirect } from 'next/navigation'
 import Link from 'next/link'
 import { createClient } from '@/lib/supabase/server'
+import type { Reward } from '@/types/database'
+
+type PassportComplete = {
+  id: string
+  completed_at: string | null
+  corridor: { id: string; name: string; city: string; country: string }
+}
 
 export default async function PassportCompletePage() {
   const supabase = await createClient()
   const { data: { user } } = await supabase.auth.getUser()
   if (!user) redirect('/auth/login')
 
-  const { data: passport } = await supabase
+  const { data: passportData } = await supabase
     .from('passports')
     .select('*, corridor:corridors(*)')
     .eq('user_id', user.id)
@@ -15,16 +22,18 @@ export default async function PassportCompletePage() {
     .order('completed_at', { ascending: false })
     .limit(1)
     .maybeSingle()
+  const passport = passportData as PassportComplete | null
 
   if (!passport) redirect('/passport')
 
-  const corridor = passport.corridor as { id: string; name: string; city: string; country: string }
+  const corridor = passport.corridor
 
-  const { data: reward } = await supabase
+  const { data: rewardData } = await supabase
     .from('rewards')
     .select('*')
     .eq('corridor_id', corridor.id)
     .maybeSingle()
+  const reward = rewardData as Reward | null
 
   return (
     <main className="min-h-screen bg-atlas-black px-4 py-8 max-w-lg mx-auto flex flex-col justify-center">

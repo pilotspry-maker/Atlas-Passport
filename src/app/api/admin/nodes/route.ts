@@ -1,17 +1,10 @@
 import { NextResponse } from 'next/server'
-import { createClient } from '@/lib/supabase/server'
 import { createAdminClient } from '@/lib/supabase/admin'
-
-async function assertAdmin() {
-  const supabase = await createClient()
-  const { data: { user } } = await supabase.auth.getUser()
-  if (!user) return false
-  const { data: profile } = await supabase.from('profiles').select('is_admin').eq('id', user.id).single()
-  return profile?.is_admin ?? false
-}
+import { requireAdmin } from '@/lib/auth'
 
 export async function GET(request: Request) {
-  if (!await assertAdmin()) return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
+  const auth = await requireAdmin()
+  if (auth.response) return auth.response
 
   const { searchParams } = new URL(request.url)
   const corridorId = searchParams.get('corridor_id')
@@ -25,7 +18,8 @@ export async function GET(request: Request) {
 }
 
 export async function POST(request: Request) {
-  if (!await assertAdmin()) return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
+  const auth = await requireAdmin()
+  if (auth.response) return auth.response
 
   const { corridor_id, name, description, address, hint, latitude, longitude } = await request.json()
   if (!corridor_id || !name?.trim()) {
@@ -34,12 +28,11 @@ export async function POST(request: Request) {
 
   const admin = createAdminClient()
 
-  // Auto-assign next sequence number
   const { data: maxRow } = await admin
     .from('nodes').select('sequence').eq('corridor_id', corridor_id)
     .order('sequence', { ascending: false }).limit(1).maybeSingle()
 
-  const sequence = (maxRow?.sequence ?? 0) + 1
+  const sequence = ((maxRow as { sequence?: number } | null)?.sequence ?? 0) + 1
 
   const { data: node, error } = await admin
     .from('nodes')

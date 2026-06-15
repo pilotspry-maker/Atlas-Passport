@@ -1,41 +1,42 @@
 import { NextResponse } from 'next/server'
-import { createClient } from '@/lib/supabase/server'
 import { createAdminClient } from '@/lib/supabase/admin'
+import { requireAdmin } from '@/lib/auth'
 
 interface Params {
   params: Promise<{ checkinId: string }>
 }
 
+type CheckInDetail = {
+  id: string
+  status: string
+  proof_url: string
+  proof_storage_path: string
+  notes: string | null
+  admin_notes: string | null
+  submitted_at: string
+  node: { name: string; sequence: number; address: string | null; corridor: { name: string; city: string } } | null
+  profile: { email: string; full_name: string | null } | null
+  passport: { id: string; activated_at: string; expires_at: string; status: string } | null
+}
+
 export async function GET(_: Request, { params }: Params) {
   const { checkinId } = await params
-  const supabase = await createClient()
-  const { data: { user } } = await supabase.auth.getUser()
-  if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
-
-  const { data: profile } = await supabase
-    .from('profiles')
-    .select('is_admin')
-    .eq('id', user.id)
-    .single()
-
-  if (!profile?.is_admin) return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
+  const auth = await requireAdmin()
+  if (auth.response) return auth.response
 
   const admin = createAdminClient()
 
-  const { data: checkIn } = await admin
+  const { data } = await admin
     .from('check_ins')
-    .select(`
-      *,
-      node:nodes(name, sequence, address, corridor:corridors(name, city)),
-      profile:profiles(email, full_name),
-      passport:passports(id, activated_at, expires_at, status)
-    `)
+    .select('id, status, proof_url, proof_storage_path, notes, admin_notes, submitted_at, node:nodes(name, sequence, address, corridor:corridors(name, city)), profile:profiles(email, full_name), passport:passports(id, activated_at, expires_at, status)')
     .eq('id', checkinId)
     .single()
 
-  if (!checkIn) return NextResponse.json({ error: 'Not found' }, { status: 404 })
+  if (!data) return NextResponse.json({ error: 'Not found' }, { status: 404 })
 
-  // Generate a fresh signed URL for the admin view
+  const checkIn = data as unknown as CheckInDetail
+
+  // Generate a fresh signed URL for the admin view (1 hour)
   const { data: freshUrl } = await admin.storage
     .from('check-in-proofs')
     .createSignedUrl(checkIn.proof_storage_path, 3600)
