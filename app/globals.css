@@ -1,0 +1,29 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root {
+    --font-playfair: 'Playfair Display', Georgia, serif;
+    --font-inter: 'Inter', system-ui, sans-serif;
+  }
+
+  body {
+    @apply bg-ink text-parchment font-sans antialiased;
+  }
+
+  ::selection {
+    @apply bg-gold text-ink;
+  }
+}
+
+@layer components {
+  .stamp {
+    @apply relative inline-block border-2 border-gold/60 rounded px-3 py-1 text-xs tracking-widest uppercase text-gold rotate-[-4deg];
+  }
+
+  .stamp::before {
+    content: '';
+    @apply absolute inset-0 border border-gold/30 rounded;
+  }
+}
