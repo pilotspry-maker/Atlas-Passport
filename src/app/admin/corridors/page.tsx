@@ -1,3 +1,4 @@
+import Link from 'next/link'
 import { createAdminClient } from '@/lib/supabase/admin'
 import AdminNav from '@/components/admin/AdminNav'
 
@@ -16,11 +17,23 @@ export default async function AdminCorridorsPage() {
       <AdminNav active="corridors" />
 
       <div className="flex items-center justify-between mb-6">
-        <h1 className="text-xl font-bold text-atlas-text">Corridors</h1>
-        <span className="text-xs text-atlas-muted">
-          Manage corridors via Supabase Studio or seed.sql
-        </span>
+        <h1 className="text-xl font-bold text-atlas-text">Corridors ({corridors?.length ?? 0})</h1>
+        <Link
+          href="/admin/corridors/new"
+          className="px-4 py-2 bg-atlas-gold text-atlas-black text-xs font-semibold uppercase tracking-wider hover:bg-atlas-gold-light transition-colors"
+        >
+          + New Corridor
+        </Link>
       </div>
+
+      {!corridors?.length && (
+        <div className="border border-dashed border-atlas-border p-12 text-center text-atlas-muted text-sm">
+          No corridors yet.{' '}
+          <Link href="/admin/corridors/new" className="text-atlas-gold hover:underline">
+            Create the first one →
+          </Link>
+        </div>
+      )}
 
       <div className="space-y-3">
         {corridors?.map(corridor => {
@@ -30,13 +43,13 @@ export default async function AdminCorridorsPage() {
           return (
             <div
               key={corridor.id}
-              className={`border ${corridor.is_active ? 'border-atlas-border' : 'border-atlas-border/40 opacity-50'} bg-atlas-card p-5`}
+              className={`border ${corridor.is_active ? 'border-atlas-border' : 'border-atlas-border/30 opacity-60'} bg-atlas-card p-5`}
             >
               <div className="flex items-start justify-between gap-4">
-                <div>
+                <div className="flex-1 min-w-0">
                   <div className="flex items-center gap-3 mb-1">
                     <h2 className="font-semibold text-atlas-text">{corridor.name}</h2>
-                    <span className={`text-xs px-1.5 py-0.5 border uppercase tracking-wider ${
+                    <span className={`text-xs px-1.5 py-0.5 border uppercase tracking-wider flex-shrink-0 ${
                       corridor.is_active
                         ? 'border-atlas-green text-atlas-green'
                         : 'border-atlas-muted text-atlas-muted'
@@ -50,9 +63,17 @@ export default async function AdminCorridorsPage() {
                   )}
                 </div>
 
-                <div className="text-right flex-shrink-0">
-                  <div className="text-xl font-bold text-atlas-gold font-mono">{nodeCount}</div>
-                  <div className="text-xs text-atlas-muted">stops</div>
+                <div className="flex items-start gap-4 flex-shrink-0">
+                  <div className="text-right">
+                    <div className="text-xl font-bold text-atlas-gold font-mono">{nodeCount}</div>
+                    <div className="text-xs text-atlas-muted">stops</div>
+                  </div>
+                  <Link
+                    href={`/admin/corridors/${corridor.id}/edit`}
+                    className="text-xs text-atlas-gold hover:text-atlas-gold-light uppercase tracking-widest transition-colors mt-1"
+                  >
+                    Edit →
+                  </Link>
                 </div>
               </div>
 
@@ -63,10 +84,6 @@ export default async function AdminCorridorsPage() {
                   </p>
                 </div>
               )}
-
-              <div className="mt-3 pt-3 border-t border-atlas-border">
-                <p className="text-xs text-atlas-muted font-mono">{corridor.id}</p>
-              </div>
             </div>
           )
         })}

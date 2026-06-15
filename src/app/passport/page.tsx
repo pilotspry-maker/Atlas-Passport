@@ -4,6 +4,7 @@ import { createClient } from '@/lib/supabase/server'
 import CountdownTimer from '@/components/passport/CountdownTimer'
 import CorridorProgress from '@/components/passport/CorridorProgress'
 import NodeCard from '@/components/nodes/NodeCard'
+import RealtimePassportUpdater from '@/components/passport/RealtimePassportUpdater'
 import type { PassportFull } from '@/types/database'
 
 async function getPassportData(userId: string): Promise<PassportFull | null> {
@@ -88,6 +89,9 @@ export default async function PassportPage({ searchParams }: Props) {
           </div>
         </div>
       </div>
+
+      {/* Live updates — refreshes page when a check-in is approved/rejected */}
+      <RealtimePassportUpdater passportId={passport.id} />
 
       {/* Submitted confirmation */}
       {params.submitted && (
