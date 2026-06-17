@@ -9,33 +9,65 @@ interface Props {
 
 export default function MagicLinkForm({ redirectTo }: Props) {
   const [email, setEmail] = useState('')
+  const [name, setName] = useState('')
+  const [referralCode, setReferralCode] = useState('')
   const [loading, setLoading] = useState(false)
   const [sent, setSent] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
-    if (!email.trim()) return
+    const trimmedEmail = email.trim()
+    if (!trimmedEmail) return
 
     setLoading(true)
     setError(null)
 
-    const supabase = createClient()
-    const callbackUrl = `${window.location.origin}/auth/callback${redirectTo ? `?next=${redirectTo}` : ''}`
+    try {
+      const supabase = createClient()
+      const callbackUrl = `${window.location.origin}/auth/callback${redirectTo ? `?next=${encodeURIComponent(redirectTo)}` : ''}`
 
-    const { error } = await supabase.auth.signInWithOtp({
-      email: email.trim(),
-      options: {
-        emailRedirectTo: callbackUrl,
-      },
-    })
+      const { error: authError } = await supabase.auth.signInWithOtp({
+        email: trimmedEmail,
+        options: {
+          emailRedirectTo: callbackUrl,
+          data: {
+            full_name: name.trim() || null,
+            referral_code: referralCode.trim() || null,
+          },
+        },
+      })
 
-    setLoading(false)
+      if (authError) {
+        // Translate low-level network errors into user-readable messages
+        const msg = authError.message
+        if (
+          msg === 'Load failed' ||
+          msg === 'Failed to fetch' ||
+          msg.includes('NetworkError') ||
+          msg.includes('fetch')
+        ) {
+          setError('Connection error — please check your internet and try again.')
+        } else if (msg.includes('rate limit') || msg.includes('too many')) {
+          setError('Too many attempts. Please wait a minute before trying again.')
+        } else if (msg.includes('not allowed') || msg.includes('invalid')) {
+          setError(`Sign-in failed: ${msg}`)
+        } else {
+          setError(msg || 'Something went wrong. Please try again.')
+        }
+        return
+      }
 
-    if (error) {
-      setError(error.message)
-    } else {
       setSent(true)
+    } catch (err) {
+      console.error('[MagicLinkForm] Unexpected error:', err)
+      setError(
+        err instanceof Error
+          ? `Error: ${err.message}`
+          : 'An unexpected error occurred. Please try again.'
+      )
+    } finally {
+      setLoading(false)
     }
   }
 
@@ -54,7 +86,7 @@ export default function MagicLinkForm({ redirectTo }: Props) {
           Click it to activate your session.
         </p>
         <button
-          onClick={() => { setSent(false); setEmail('') }}
+          onClick={() => { setSent(false); setEmail(''); setName(''); setReferralCode('') }}
           className="text-xs text-atlas-muted hover:text-atlas-text-dim transition-colors underline"
         >
           Use a different email
@@ -64,7 +96,7 @@ export default function MagicLinkForm({ redirectTo }: Props) {
   }
 
   return (
-    <form onSubmit={handleSubmit} className="space-y-4">
+    <form onSubmit={handleSubmit} className="space-y-4" autoComplete="on">
       <div>
         <label htmlFor="email" className="block text-xs text-atlas-muted uppercase tracking-widest mb-2">
           Email Address
@@ -72,6 +104,7 @@ export default function MagicLinkForm({ redirectTo }: Props) {
         <input
           id="email"
           type="email"
+          autoComplete="email"
           value={email}
           onChange={e => setEmail(e.target.value)}
           placeholder="you@example.com"
@@ -81,8 +114,42 @@ export default function MagicLinkForm({ redirectTo }: Props) {
         />
       </div>
 
+      <div>
+        <label htmlFor="name" className="block text-xs text-atlas-muted uppercase tracking-widest mb-2">
+          Your Name <span className="normal-case tracking-normal opacity-60">(optional)</span>
+        </label>
+        <input
+          id="name"
+          type="text"
+          autoComplete="name"
+          value={name}
+          onChange={e => setName(e.target.value)}
+          placeholder="How Kaelo will address you"
+          disabled={loading}
+          className="w-full px-4 py-3 bg-atlas-card border border-atlas-border text-atlas-text placeholder-atlas-muted text-sm focus:outline-none focus:border-atlas-gold transition-colors disabled:opacity-50"
+        />
+      </div>
+
+      <div>
+        <label htmlFor="referral" className="block text-xs text-atlas-muted uppercase tracking-widest mb-2">
+          Referral Code <span className="normal-case tracking-normal opacity-60">(optional)</span>
+        </label>
+        <input
+          id="referral"
+          type="text"
+          autoComplete="off"
+          value={referralCode}
+          onChange={e => setReferralCode(e.target.value)}
+          placeholder="Leave blank if none"
+          disabled={loading}
+          className="w-full px-4 py-3 bg-atlas-card border border-atlas-border text-atlas-text placeholder-atlas-muted text-sm focus:outline-none focus:border-atlas-gold transition-colors disabled:opacity-50"
+        />
+      </div>
+
       {error && (
-        <p className="text-sm text-atlas-red-light">{error}</p>
+        <p className="text-sm text-red-400 border border-red-400/30 bg-red-400/5 px-4 py-3">
+          {error}
+        </p>
       )}
 
       <button
@@ -90,11 +157,11 @@ export default function MagicLinkForm({ redirectTo }: Props) {
         disabled={loading || !email.trim()}
         className="w-full py-3 bg-atlas-gold text-atlas-black font-semibold text-sm tracking-wider uppercase hover:bg-atlas-gold-light transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
       >
-        {loading ? 'Sending...' : 'Send Magic Link'}
+        {loading ? 'Sending…' : 'Send Magic Link'}
       </button>
 
       <p className="text-xs text-atlas-muted text-center">
-        No password needed. Check your spam folder if the link doesn&apos;t arrive within a minute.
+        No password needed. We&apos;ll email you a secure link. Check spam if it doesn&apos;t arrive within a minute.
       </p>
     </form>
   )

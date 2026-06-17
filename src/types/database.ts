@@ -15,6 +15,7 @@ export interface Database {
           email: string
           full_name: string | null
           is_admin: boolean
+          referral_code: string | null
           created_at: string
           updated_at: string
         }
@@ -23,6 +24,7 @@ export interface Database {
           email: string
           full_name?: string | null
           is_admin?: boolean
+          referral_code?: string | null
           created_at?: string
           updated_at?: string
         }
@@ -30,6 +32,7 @@ export interface Database {
           email?: string
           full_name?: string | null
           is_admin?: boolean
+          referral_code?: string | null
           updated_at?: string
         }
         Relationships: []

@@ -34,21 +34,36 @@ function ActivateContent() {
     setLoading(true)
     setError(null)
 
-    const res = await fetch('/api/passport/activate', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ corridorId }),
-    })
+    try {
+      const res = await fetch('/api/passport/activate', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ corridorId }),
+      })
 
-    const data = await res.json()
+      let data: { error?: string } = {}
+      try {
+        data = await res.json()
+      } catch {
+        // Non-JSON response (e.g. 502 from Vercel)
+      }
 
-    if (!res.ok) {
-      setError(data.error ?? 'Failed to activate passport')
+      if (!res.ok) {
+        setError(data.error ?? `Activation failed (${res.status}). Please try again.`)
+        return
+      }
+
+      router.push('/passport')
+    } catch (err) {
+      console.error('[handleActivate] Network error:', err)
+      setError(
+        err instanceof Error
+          ? `Network error: ${err.message}`
+          : 'Could not reach the server. Check your connection and try again.'
+      )
+    } finally {
       setLoading(false)
-      return
     }
-
-    router.push('/passport')
   }
 
   if (!corridor) {
