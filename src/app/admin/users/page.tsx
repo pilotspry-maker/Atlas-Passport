@@ -1,3 +1,5 @@
+import { redirect } from 'next/navigation'
+import { createClient } from '@/lib/supabase/server'
 import { createAdminClient } from '@/lib/supabase/admin'
 import AdminNav from '@/components/admin/AdminNav'
 import { formatDate } from '@/lib/utils'
@@ -20,6 +22,12 @@ type UserRow = {
 }
 
 export default async function AdminUsersPage() {
+  const supabase = await createClient()
+  const { data: { user } } = await supabase.auth.getUser()
+  if (!user) redirect('/auth/login')
+  const { data: profileData } = await supabase.from('profiles').select('is_admin').eq('id', user.id).single()
+  if (!(profileData as { is_admin?: boolean } | null)?.is_admin) redirect('/')
+
   const admin = createAdminClient()
 
   const { data } = await admin

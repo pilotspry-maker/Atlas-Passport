@@ -37,6 +37,10 @@ export async function POST(request: Request) {
 
     if (corridorError) {
       console.error('[activate] Corridor lookup error:', corridorError.message)
+      // PGRST116 = no rows found (corridor genuinely missing); anything else is a DB error
+      if (corridorError.code !== 'PGRST116') {
+        return NextResponse.json({ error: 'Unable to verify corridor. Please try again.' }, { status: 500 })
+      }
     }
 
     const corridor = corridorData as Pick<Corridor, 'id' | 'name' | 'city' | 'country'> | null
@@ -52,7 +56,10 @@ export async function POST(request: Request) {
       .eq('status', 'active')
       .maybeSingle()
 
-    if (activeErr) console.error('[activate] Active passport check error:', activeErr.message)
+    if (activeErr) {
+      console.error('[activate] Active passport check error:', activeErr.message)
+      return NextResponse.json({ error: 'Unable to check passport status. Please try again.' }, { status: 500 })
+    }
 
     const existingActive = existingActiveData as { id: string } | null
     if (existingActive) {
@@ -67,7 +74,10 @@ export async function POST(request: Request) {
       .eq('corridor_id', corridorId)
       .maybeSingle()
 
-    if (corridorPassportErr) console.error('[activate] Corridor passport check error:', corridorPassportErr.message)
+    if (corridorPassportErr) {
+      console.error('[activate] Corridor passport check error:', corridorPassportErr.message)
+      return NextResponse.json({ error: 'Unable to check passport status. Please try again.' }, { status: 500 })
+    }
 
     const existingForCorridor = existingForCorridorData as { id: string; status: string } | null
     if (existingForCorridor) {

@@ -15,6 +15,11 @@ type PassportRow = {
 }
 
 export async function GET(request: Request) {
+  if (!process.env.CRON_SECRET) {
+    console.error('[cron/timer-warning] CRON_SECRET env var is not set')
+    return NextResponse.json({ error: 'Server misconfiguration' }, { status: 500 })
+  }
+
   const authHeader = request.headers.get('authorization')
   if (authHeader !== `Bearer ${process.env.CRON_SECRET}`) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })

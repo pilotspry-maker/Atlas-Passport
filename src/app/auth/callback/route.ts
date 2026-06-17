@@ -45,11 +45,14 @@ export async function GET(request: Request) {
       if (fullName || referralCode) {
         const admin = createAdminClient()
 
-        // Try updating with referral_code first; fall back to name-only if column missing.
+        // Upsert handles trigger race: if the profile row hasn't been created yet,
+        // this creates it. onConflict:'id' updates if it already exists.
         const { error: profileError } = await admin
           .from('profiles')
-          .update({ full_name: fullName, referral_code: referralCode })
-          .eq('id', user.id)
+          .upsert(
+            { id: user.id, email: user.email ?? '', full_name: fullName, referral_code: referralCode },
+            { onConflict: 'id' }
+          )
 
         if (profileError) {
           if (
@@ -57,15 +60,19 @@ export async function GET(request: Request) {
             (profileError.message.includes('referral_code') ||
               profileError.code === '42703') // Postgres "undefined_column"
           ) {
-            // Column doesn't exist yet — update name only
+            // referral_code column doesn't exist yet — upsert name only
             if (fullName) {
               await admin
                 .from('profiles')
-                .update({ full_name: fullName })
-                .eq('id', user.id)
+                .upsert(
+                  { id: user.id, email: user.email ?? '', full_name: fullName },
+                  { onConflict: 'id' }
+                )
+            } else {
+              console.warn('[auth/callback] referral_code column missing and no fullName to sync')
             }
           } else {
-            console.error('[auth/callback] Profile update error:', profileError.message)
+            console.error('[auth/callback] Profile upsert error:', profileError.message)
           }
         }
       }

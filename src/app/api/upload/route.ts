@@ -25,8 +25,10 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: 'File too large (max 10MB)' }, { status: 400 })
   }
 
-  // Verify passport belongs to user and is active
-  const { data: passportData } = await supabase
+  const admin = createAdminClient()
+
+  // Verify passport belongs to user and is active (admin client for reliable reads)
+  const { data: passportData } = await admin
     .from('passports')
     .select('id, status, expires_at')
     .eq('id', passportId)
@@ -45,7 +47,6 @@ export async function POST(request: Request) {
   const ext = fileType.split('/')[1].replace('jpeg', 'jpg')
   const storagePath = `${user.id}/${passportId}/${nodeId}/${Date.now()}.${ext}`
 
-  const admin = createAdminClient()
   const { data, error } = await admin.storage
     .from('check-in-proofs')
     .createSignedUploadUrl(storagePath)

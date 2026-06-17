@@ -1,5 +1,7 @@
 import Link from 'next/link'
 import Image from 'next/image'
+import { redirect } from 'next/navigation'
+import { createClient } from '@/lib/supabase/server'
 import { createAdminClient } from '@/lib/supabase/admin'
 import AdminNav from '@/components/admin/AdminNav'
 import { formatDateTime } from '@/lib/utils'
@@ -17,6 +19,12 @@ type QueueItem = {
 }
 
 export default async function AdminQueuePage() {
+  const supabase = await createClient()
+  const { data: { user } } = await supabase.auth.getUser()
+  if (!user) redirect('/auth/login')
+  const { data: profileData } = await supabase.from('profiles').select('is_admin').eq('id', user.id).single()
+  if (!(profileData as { is_admin?: boolean } | null)?.is_admin) redirect('/')
+
   const admin = createAdminClient()
 
   const [{ data: rawCheckIns }, { data: rawStats }] = await Promise.all([

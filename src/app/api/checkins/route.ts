@@ -5,11 +5,18 @@ import { sendCheckInReceivedEmail } from '@/lib/email'
 import type { Passport, Node, CheckIn } from '@/types/database'
 
 export async function POST(request: Request) {
+  try {
   const supabase = await createClient()
   const { data: { user } } = await supabase.auth.getUser()
   if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
 
-  const { passportId, nodeId, storagePath, notes } = await request.json()
+  let body: { passportId?: string; nodeId?: string; storagePath?: string; notes?: string }
+  try {
+    body = await request.json()
+  } catch {
+    return NextResponse.json({ error: 'Invalid request body' }, { status: 400 })
+  }
+  const { passportId, nodeId, storagePath, notes } = body
 
   if (!passportId || !nodeId || !storagePath) {
     return NextResponse.json({ error: 'Missing required fields' }, { status: 400 })
@@ -145,4 +152,8 @@ export async function POST(request: Request) {
   }).catch(err => console.error('Email error:', err))
 
   return NextResponse.json({ checkInId })
+  } catch (err) {
+    console.error('[checkins] Unhandled error:', err)
+    return NextResponse.json({ error: 'An unexpected error occurred' }, { status: 500 })
+  }
 }
