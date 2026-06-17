@@ -3,8 +3,13 @@ import { NextResponse, type NextRequest } from 'next/server'
 
 export async function middleware(request: NextRequest) {
   // If Supabase env vars are not set (e.g. build-time or misconfigured deployment),
-  // pass the request through so the app can render its own error/loading state.
+  // still enforce hard blocks on admin routes before passing anything through.
   if (!process.env.NEXT_PUBLIC_SUPABASE_URL || !process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY) {
+    if (request.nextUrl.pathname.startsWith('/admin')) {
+      const url = request.nextUrl.clone()
+      url.pathname = '/auth/login'
+      return NextResponse.redirect(url)
+    }
     return NextResponse.next({ request })
   }
 

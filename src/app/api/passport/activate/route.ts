@@ -120,7 +120,7 @@ export async function POST(request: Request) {
     if (insertError) {
       console.error('[activate] Passport insert error:', insertError.message, insertError.details)
       return NextResponse.json(
-        { error: `Failed to create passport: ${insertError.message}` },
+        { error: 'Failed to create passport. Please try again.' },
         { status: 500 }
       )
     }
