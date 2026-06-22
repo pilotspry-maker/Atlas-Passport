@@ -1,8 +1,46 @@
 import { createServerClient, type CookieOptions } from '@supabase/ssr'
 import { NextResponse, type NextRequest } from 'next/server'
 
+/** Build a Supabase SSR client safe for the Vercel Edge Runtime.
+ *  @supabase/realtime-js ≥2.108 throws when it detects EdgeRuntime via
+ *  globalThis.EdgeRuntime before checking if native WebSocket exists.
+ *  Passing `transport: globalThis.WebSocket` bypasses getWebSocketConstructor()
+ *  entirely, so the RealtimeClient initialises without throwing.
+ */
+function makeEdgeSafeClient(
+  request: NextRequest,
+  getSupabaseResponse: () => NextResponse,
+  setSupabaseResponse: (r: NextResponse) => void
+) {
+  return createServerClient(
+    process.env.NEXT_PUBLIC_SUPABASE_URL!,
+    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
+    {
+      cookies: {
+        getAll() {
+          return request.cookies.getAll()
+        },
+        setAll(cookiesToSet: { name: string; value: string; options: CookieOptions }[]) {
+          cookiesToSet.forEach(({ name, value }) => request.cookies.set(name, value))
+          const next = NextResponse.next({ request })
+          setSupabaseResponse(next)
+          cookiesToSet.forEach(({ name, value, options }) =>
+            next.cookies.set(name, value, options)
+          )
+        },
+      },
+      // Prevent @supabase/realtime-js from calling getWebSocketConstructor(),
+      // which throws "Edge runtime detected" on Vercel Edge even when WebSocket
+      // is natively available.
+      realtime: {
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        transport: (globalThis as any).WebSocket,
+      },
+    }
+  )
+}
+
 export async function middleware(request: NextRequest) {
-  // If Supabase env vars are not set, enforce hard blocks on admin routes and pass through.
   if (!process.env.NEXT_PUBLIC_SUPABASE_URL || !process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY) {
     if (request.nextUrl.pathname.startsWith('/admin')) {
       const url = request.nextUrl.clone()
@@ -16,36 +54,19 @@ export async function middleware(request: NextRequest) {
   let user = null
 
   try {
-    const supabase = createServerClient(
-      process.env.NEXT_PUBLIC_SUPABASE_URL!,
-      process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
-      {
-        cookies: {
-          getAll() {
-            return request.cookies.getAll()
-          },
-          setAll(cookiesToSet: { name: string; value: string; options: CookieOptions }[]) {
-            cookiesToSet.forEach(({ name, value }) => request.cookies.set(name, value))
-            supabaseResponse = NextResponse.next({ request })
-            cookiesToSet.forEach(({ name, value, options }) =>
-              supabaseResponse.cookies.set(name, value, options)
-            )
-          },
-        },
-      }
+    const supabase = makeEdgeSafeClient(
+      request,
+      () => supabaseResponse,
+      (r) => { supabaseResponse = r }
     )
-
     const { data } = await supabase.auth.getUser()
     user = data.user
   } catch {
-    // Supabase unreachable — pass request through without auth enforcement.
-    // Individual pages/routes re-validate auth via their own server-side checks.
     return NextResponse.next({ request })
   }
 
   const { pathname } = request.nextUrl
 
-  // Protected: requires auth
   const protectedPrefixes = ['/passport', '/corridors', '/nodes']
   const isProtected = protectedPrefixes.some(p => pathname.startsWith(p))
 
@@ -56,7 +77,6 @@ export async function middleware(request: NextRequest) {
     return NextResponse.redirect(url)
   }
 
-  // Admin routes: requires auth + is_admin
   if (pathname.startsWith('/admin')) {
     if (!user) {
       const url = request.nextUrl.clone()
@@ -66,45 +86,30 @@ export async function middleware(request: NextRequest) {
     }
 
     try {
-      const supabase = createServerClient(
-        process.env.NEXT_PUBLIC_SUPABASE_URL!,
-        process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
-        {
-          cookies: {
-            getAll() { return request.cookies.getAll() },
-            setAll(cookiesToSet: { name: string; value: string; options: CookieOptions }[]) {
-              cookiesToSet.forEach(({ name, value }) => request.cookies.set(name, value))
-              supabaseResponse = NextResponse.next({ request })
-              cookiesToSet.forEach(({ name, value, options }) =>
-                supabaseResponse.cookies.set(name, value, options)
-              )
-            },
-          },
-        }
+      const adminSupabase = makeEdgeSafeClient(
+        request,
+        () => supabaseResponse,
+        (r) => { supabaseResponse = r }
       )
-
-      const { data: profileData } = await supabase
+      const { data: profileData } = await adminSupabase
         .from('profiles')
         .select('is_admin')
         .eq('id', user.id)
         .single()
 
       const profile = profileData as { is_admin?: boolean } | null
-
       if (!profile?.is_admin) {
         const url = request.nextUrl.clone()
         url.pathname = '/'
         return NextResponse.redirect(url)
       }
     } catch {
-      // DB unreachable — deny admin access
       const url = request.nextUrl.clone()
       url.pathname = '/'
       return NextResponse.redirect(url)
     }
   }
 
-  // Already logged in — skip the login page
   if (pathname === '/auth/login' && user) {
     const url = request.nextUrl.clone()
     url.pathname = '/passport'
