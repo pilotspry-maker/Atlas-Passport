@@ -1,6 +1,6 @@
 # .github/workflows/check-env-vars.yml  — clean single-fetch version
 #
-# Drop-in replacement for the step above. Uses a temp file to avoid
+# Drop-in replacement for the step above. (VERCEL_TOKEN configured 2026-06-22) Uses a temp file to avoid
 # calling the Vercel API twice.
 
 name: Check Vercel Env Vars
