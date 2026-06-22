@@ -9,6 +9,13 @@ on:
   pull_request:
     branches:
       - main
+  push:
+    branches:
+      - main
+      - 'security/**'
+      - 'deps/**'
+      - 'feat/**'
+      - 'fix/**' 
 
 jobs:
   verify-env-vars:
