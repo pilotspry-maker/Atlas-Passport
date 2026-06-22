@@ -40,7 +40,10 @@ export async function PATCH(request: Request, { params }: Params) {
   const { data: corridor, error } = await admin
     .from('corridors').update(updates).eq('id', corridorId).select().single()
 
-  if (error) return NextResponse.json({ error: error.message }, { status: 500 })
+  if (error) {
+    console.error('[route] DB error:', error.message)
+    return NextResponse.json({ error: 'Internal server error' }, { status: 500 })
+  }
   return NextResponse.json({ corridor })
 }
 
@@ -51,6 +54,9 @@ export async function DELETE(_: Request, { params }: Params) {
 
   const admin = createAdminClient()
   const { error } = await admin.from('corridors').delete().eq('id', corridorId)
-  if (error) return NextResponse.json({ error: error.message }, { status: 500 })
+  if (error) {
+    console.error('[route] DB error:', error.message)
+    return NextResponse.json({ error: 'Internal server error' }, { status: 500 })
+  }
   return NextResponse.json({ ok: true })
 }

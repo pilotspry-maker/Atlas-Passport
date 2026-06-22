@@ -33,7 +33,10 @@ export async function PATCH(request: Request, { params }: Params) {
   const { data: node, error } = await admin
     .from('nodes').update(updates).eq('id', nodeId).select().single()
 
-  if (error) return NextResponse.json({ error: error.message }, { status: 500 })
+  if (error) {
+    console.error('[route] DB error:', error.message)
+    return NextResponse.json({ error: 'Internal server error' }, { status: 500 })
+  }
   return NextResponse.json({ node })
 }
 
@@ -44,6 +47,9 @@ export async function DELETE(_: Request, { params }: Params) {
 
   const admin = createAdminClient()
   const { error } = await admin.from('nodes').delete().eq('id', nodeId)
-  if (error) return NextResponse.json({ error: error.message }, { status: 500 })
+  if (error) {
+    console.error('[route] DB error:', error.message)
+    return NextResponse.json({ error: 'Internal server error' }, { status: 500 })
+  }
   return NextResponse.json({ ok: true })
 }
