@@ -1,14 +1,17 @@
-# .github/workflows/check-env-vars.yml  — clean single-fetch version
-#
-# Drop-in replacement for the step above. Uses a temp file to avoid
-# calling the Vercel API twice.
-
+# .github/workflows/check-env-vars.yml
 name: Check Vercel Env Vars
 
 on:
   pull_request:
     branches:
       - main
+  push:
+    branches:
+      - main
+      - 'security/**'
+      - 'deps/**'
+      - 'feat/**'
+      - 'fix/**'
 
 jobs:
   verify-env-vars:
@@ -16,78 +19,61 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Fetch env vars from Vercel API
+      - name: Fetch and validate Vercel env vars
         env:
           VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
         run: |
-          # Fetch the project's env var list and save to a temp file.
-          # Vercel returns key names even for Sensitive vars; values are redacted.
-          curl --silent --fail \
+          set -euo pipefail
+
+          # Fetch env var list from Vercel (key names only; values are redacted for Sensitive vars)
+          response=$(curl --silent --fail \
             --header "Authorization: Bearer ${VERCEL_TOKEN}" \
-            "https://api.vercel.com/v9/projects/atlas-passport/env?teamId=team_4QVS3jF4bz6HIripIcSe0Re5&limit=100" \
-            > /tmp/vercel_envs.json || {
-              echo "ERROR: Vercel API request failed. Verify VERCEL_TOKEN is set and valid."
-              exit 1
-            }
+            "https://api.vercel.com/v9/projects/atlas-passport/env?teamId=team_4QVS3jF4bz6HIripIcSe0Re5&limit=100") || {
+            echo "ERROR: Vercel API request failed. Check that VERCEL_TOKEN is set and valid."
+            exit 1
+          }
 
-      - name: Validate mandatory keys exist in production and preview
-        run: |
-          python3 - /tmp/vercel_envs.json <<'PYEOF'
-import json, sys
+          # Extract keys per target using jq
+          production_keys=$(echo "$response" | jq -r '.envs[] | select(.target[] == "production") | .key' 2>/dev/null | sort)
+          preview_keys=$(echo "$response"    | jq -r '.envs[] | select(.target[] == "preview")    | .key' 2>/dev/null | sort)
 
-# Load the JSON response saved by the previous step.
-with open(sys.argv[1]) as f:
-    data = json.load(f)
+          required_keys=(
+            NEXT_PUBLIC_SUPABASE_URL
+            NEXT_PUBLIC_SUPABASE_ANON_KEY
+            SUPABASE_SERVICE_ROLE_KEY
+            RESEND_API_KEY
+            RESEND_FROM_EMAIL
+            RESEND_FROM_NAME
+            CRON_SECRET
+            NEXT_PUBLIC_APP_URL
+          )
 
-envs = data.get("envs", [])
+          missing_production=()
+          missing_preview=()
 
-# Build sets of key names per target environment.
-production_keys = set()
-preview_keys    = set()
+          for key in "${required_keys[@]}"; do
+            echo "$production_keys" | grep -qx "$key" || missing_production+=("$key")
+            echo "$preview_keys"    | grep -qx "$key" || missing_preview+=("$key")
+          done
 
-for entry in envs:
-    targets = entry.get("target", [])
-    key     = entry.get("key", "")
-    if "production" in targets:
-        production_keys.add(key)
-    if "preview" in targets:
-        preview_keys.add(key)
+          failed=0
 
-# Mandatory keys for the Atlas Passport project.
-required = [
-    "NEXT_PUBLIC_SUPABASE_URL",
-    "NEXT_PUBLIC_SUPABASE_ANON_KEY",
-    "SUPABASE_SERVICE_ROLE_KEY",
-    "RESEND_API_KEY",
-    "RESEND_FROM_EMAIL",
-    "RESEND_FROM_NAME",
-    "CRON_SECRET",
-    "NEXT_PUBLIC_APP_URL",
-]
+          if [ ${#missing_production[@]} -gt 0 ]; then
+            echo "MISSING from PRODUCTION target:"
+            for k in "${missing_production[@]}"; do echo "  - $k"; done
+            failed=1
+          fi
 
-missing_production = [k for k in required if k not in production_keys]
-missing_preview    = [k for k in required if k not in preview_keys]
+          if [ ${#missing_preview[@]} -gt 0 ]; then
+            echo "MISSING from PREVIEW target:"
+            for k in "${missing_preview[@]}"; do echo "  - $k"; done
+            failed=1
+          fi
 
-if not missing_production and not missing_preview:
-    print("OK: All required env vars are present in both production and preview targets.")
-    sys.exit(0)
-
-# Report missing keys with enough context to act on immediately.
-print("FAILED: One or more required env vars are missing from Vercel.\n")
-
-if missing_production:
-    print("Missing from PRODUCTION target:")
-    for k in missing_production:
-        print(f"  - {k}")
-    print()
-
-if missing_preview:
-    print("Missing from PREVIEW target:")
-    for k in missing_preview:
-        print(f"  - {k}")
-    print()
-
-print("Fix: Open the Vercel dashboard → atlas-passport → Settings → Environment Variables,")
-print("add the missing keys, then re-run this workflow (push an empty commit or re-trigger CI).")
-sys.exit(1)
-PYEOF
+          if [ $failed -eq 0 ]; then
+            echo "OK: All required env vars are present in both production and preview."
+          else
+            echo ""
+            echo "Fix: Vercel dashboard -> atlas-passport -> Settings -> Environment Variables"
+            exit 1
+          fi
