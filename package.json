@@ -10,7 +10,9 @@
     "build": "next build",
     "start": "next start",
     "lint": "next lint",
-    "email": "email dev --dir emails --port 3001"
+    "email": "email dev --dir emails --port 3001",
+    "test:rls-exploits": "vitest run --config vitest.rls.config.ts",
+    "test:rls-exploits:watch": "vitest --config vitest.rls.config.ts"
   },
   "dependencies": {
     "@react-email/code-block": "^0.2.1",
@@ -36,7 +38,8 @@
     "eslint-config-next": "^16.2.9",
     "postcss": "^8.5.10",
     "tailwindcss": "^3.4.6",
-    "typescript": "^5.5.3"
+    "typescript": "^5.5.3",
+    "vitest": "^2.0.0"
   },
   "overrides": {
     "prismjs": "^1.30.0",
