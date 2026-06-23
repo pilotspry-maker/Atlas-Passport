@@ -18,10 +18,11 @@ jobs:
         run: |
           echo "$SQL_B64" | base64 -d > /tmp/migrations.sql
           echo "SQL lines: $(wc -l < /tmp/migrations.sql)"
+          # Use direct DB host (IPv6 — GitHub runners support IPv6)
           psql \
-            "postgresql://postgres.gaavynmmysdhovpatzlp@aws-0-us-east-1.pooler.supabase.com:6543/postgres?sslmode=require" \
+            "postgresql://postgres:$PGPASSWORD@db.gaavynmmysdhovpatzlp.supabase.co:5432/postgres?sslmode=require" \
             -f /tmp/migrations.sql
-          echo "Migrations applied"
+          echo "Exit code: $?"
 
       - name: Verify migration 008
         env:
@@ -34,4 +35,4 @@ jobs:
             -d '{}')
           echo "create_test_users: HTTP $STATUS"
           [ "$STATUS" != "404" ] || (echo "FAIL: migration 008 not applied" && exit 1)
-          echo "PASS"
+          echo "PASS: migration 008 confirmed"
