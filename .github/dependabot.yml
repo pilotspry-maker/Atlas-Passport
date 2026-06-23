@@ -1,0 +1,54 @@
+# .github/dependabot.yml
+version: 2
+updates:
+  # npm dependencies
+  - package-ecosystem: "npm"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+      time: "09:00"
+      timezone: "America/New_York"
+    open-pull-requests-limit: 5
+    groups:
+      next-ecosystem:
+        patterns:
+          - "next"
+          - "eslint-config-next"
+      react-ecosystem:
+        patterns:
+          - "react"
+          - "react-dom"
+          - "@types/react*"
+      supabase:
+        patterns:
+          - "@supabase/*"
+      react-email:
+        patterns:
+          - "@react-email/*"
+          - "react-email"
+      dev-tools:
+        patterns:
+          - "typescript"
+          - "eslint*"
+          - "autoprefixer"
+          - "tailwindcss"
+          - "postcss"
+          - "@types/node"
+    labels:
+      - "dependencies"
+    commit-message:
+      prefix: "deps"
+
+  # GitHub Actions
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+      time: "09:00"
+      timezone: "America/New_York"
+    labels:
+      - "dependencies"
+    commit-message:
+      prefix: "ci"
