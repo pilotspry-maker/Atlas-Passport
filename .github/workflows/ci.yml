@@ -1,0 +1,147 @@
+# .github/workflows/ci.yml
+name: CI
+
+on:
+  pull_request:
+    branches:
+      - main
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  lint-build-size:
+    name: Lint · Build · Bundle Size
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: write   # needed to post the size report comment
+
+    steps:
+      # ── 1. Checkout ──────────────────────────────────────────────────────────
+      - name: Checkout PR branch
+        uses: actions/checkout@v4
+
+      # ── 2. Node.js ───────────────────────────────────────────────────────────
+      - name: Set up Node.js 24
+        uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: 'npm'
+
+      # ── 3. Install ───────────────────────────────────────────────────────────
+      - name: Install dependencies
+        run: npm ci --legacy-peer-deps
+
+      # ── 4. Lint ──────────────────────────────────────────────────────────────
+      #
+      # next lint shells out to eslint with the flat config (eslint.config.js).
+      # eslint-config-next@16 enforces react-hooks/purity and
+      # react-hooks/set-state-in-effect among the 66 bundled rules.
+      # --max-warnings 0 means ANY warning is also a hard failure.
+      - name: ESLint (zero warnings allowed)
+        run: npx eslint src/ --max-warnings 0
+
+      # ── 5. Type-check ────────────────────────────────────────────────────────
+      - name: TypeScript check
+        run: npx tsc --noEmit
+
+      # ── 6. Build ─────────────────────────────────────────────────────────────
+      #
+      # Requires real env vars so Next.js can validate public constants at
+      # build time. Values are non-secret placeholders — the build only needs
+      # them to be present and non-empty; actual secrets live in Vercel.
+      - name: next build
+        env:
+          NEXT_PUBLIC_SUPABASE_URL:     ${{ secrets.NEXT_PUBLIC_SUPABASE_URL }}
+          NEXT_PUBLIC_SUPABASE_ANON_KEY: ${{ secrets.NEXT_PUBLIC_SUPABASE_ANON_KEY }}
+          NEXT_PUBLIC_APP_URL:          ${{ secrets.NEXT_PUBLIC_APP_URL }}
+          # Server-only secrets — required by build-time imports
+          SUPABASE_SERVICE_ROLE_KEY:    ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+          RESEND_API_KEY:               ${{ secrets.RESEND_API_KEY }}
+          RESEND_FROM_EMAIL:            ${{ secrets.RESEND_FROM_EMAIL }}
+          RESEND_FROM_NAME:             ${{ secrets.RESEND_FROM_NAME }}
+          CRON_SECRET:                  ${{ secrets.CRON_SECRET }}
+        run: npm run build
+
+      # ── 7. Bundle size report ────────────────────────────────────────────────
+      #
+      # Next 16 writes .next/diagnostics/route-bundle-stats.json after every
+      # Turbopack build. It contains firstLoadUncompressedJsBytes per route.
+      # We parse it, convert to KB, sort descending, enforce a per-route hard
+      # cap (default 1 500 KB), and post the table as a PR comment.
+      - name: Parse bundle sizes
+        id: bundle
+        run: |
+          python3 << 'PYEOF'
+          import json, os, sys
+
+          CAP_KB = int(os.environ.get("BUNDLE_CAP_KB", "1500"))
+          stats_path = ".next/diagnostics/route-bundle-stats.json"
+
+          with open(stats_path) as f:
+              routes = json.load(f)
+
+          routes.sort(key=lambda r: r["firstLoadUncompressedJsBytes"], reverse=True)
+
+          lines = []
+          violations = []
+          total_bytes = 0
+
+          for r in routes:
+              kb = r["firstLoadUncompressedJsBytes"] / 1024
+              total_bytes += r["firstLoadUncompressedJsBytes"]
+              flag = " ⚠️" if kb > CAP_KB else ""
+              lines.append(f"| `{r['route']}` | {kb:,.1f} KB{flag} |")
+              if kb > CAP_KB:
+                  violations.append(f"{r['route']} ({kb:,.1f} KB > {CAP_KB} KB cap)")
+
+          total_kb = total_bytes / 1024
+          table = "\n".join(lines)
+
+          # Write outputs for downstream steps
+          delimiter = "EOF_BUNDLE"
+          with open(os.environ["GITHUB_OUTPUT"], "a") as out:
+              out.write(f"total_kb={total_kb:.1f}\n")
+              out.write(f"route_count={len(routes)}\n")
+              out.write(f"violations={len(violations)}\n")
+              out.write(f"table<<{delimiter}\n{table}\n{delimiter}\n")
+              if violations:
+                  vlist = "\n".join(f"- {v}" for v in violations)
+                  out.write(f"violation_list<<{delimiter}\n{vlist}\n{delimiter}\n")
+              else:
+                  out.write(f"violation_list<<{delimiter}\nnone\n{delimiter}\n")
+          PYEOF
+        env:
+          BUNDLE_CAP_KB: '1500'
+
+      # ── 8. Post PR comment with size table ──────────────────────────────────
+      - name: Comment bundle sizes on PR
+        if: github.event_name == 'pull_request'
+        uses: marocchino/sticky-pull-request-comment@v2
+        with:
+          header: bundle-size-report
+          message: |
+            ## Bundle Size Report
+
+            **${{ steps.bundle.outputs.route_count }} routes · Total first-load JS: ${{ steps.bundle.outputs.total_kb }} KB (uncompressed)**
+            Cap per route: 1 500 KB — routes exceeding this are flagged ⚠️
+
+            | Route | First-Load JS |
+            |---|---|
+            ${{ steps.bundle.outputs.table }}
+
+            ${{ steps.bundle.outputs.violations != '0' && format('### ⚠️ Cap exceeded\n{0}', steps.bundle.outputs.violation_list) || '✅ All routes within cap.' }}
+
+            <sub>Sizes are uncompressed. Gzip typically reduces by ~70%. Generated by CI · `route-bundle-stats.json`</sub>
+
+      # ── 9. Fail if cap exceeded ──────────────────────────────────────────────
+      - name: Enforce bundle size cap
+        if: steps.bundle.outputs.violations != '0'
+        run: |
+          echo "Bundle size cap exceeded on ${{ steps.bundle.outputs.violations }} route(s):"
+          echo "${{ steps.bundle.outputs.violation_list }}"
+          echo ""
+          echo "Cap is 1 500 KB uncompressed per route. Reduce bundle size before merging."
+          exit 1
