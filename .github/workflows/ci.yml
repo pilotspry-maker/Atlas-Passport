@@ -270,7 +270,7 @@ jobs:
                   json={"user_email": email},
                   timeout=20,
               )
-              if not r.ok:
+              if not r.is_success:
                   raise RuntimeError(f"confirm_test_users({email}): {r.status_code} {r.text}")
               result = r.json()
               print(f"  confirm {email}: {result.get('status')} (rows updated: {result.get('updated')})")
@@ -283,7 +283,7 @@ jobs:
                   json={"email": email, "password": password},
                   timeout=20,
               )
-              if not r.ok:
+              if not r.is_success:
                   raise RuntimeError(f"signIn {email}: {r.status_code} {r.text}")
               data = r.json()
               jwt = data["access_token"]
@@ -330,7 +330,7 @@ jobs:
               json={},
               timeout=20,
           )
-          if not r.ok:
+          if not r.is_success:
               raise RuntimeError(f"seed_ci_fixtures: {r.status_code} {r.text}")
           print(f"  seed_ci_fixtures: {r.json().get('status')}")
 
