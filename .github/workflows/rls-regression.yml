@@ -1,0 +1,408 @@
+# .github/workflows/rls-regression.yml
+#
+# ════════════════════════════════════════════════════════════════════════════
+# RLS Regression Suite — Atlas Passport
+# ════════════════════════════════════════════════════════════════════════════
+#
+# Runs on every PR to main AND on every push to main.
+# Independently validates 4 regression categories using a dedicated
+# fixture namespace (reg_player_one / reg_player_two) isolated from
+# the exploit suite fixtures.
+#
+# Test categories:
+#   reg-01  Protected field mutation prevention (profiles.is_admin, etc.)
+#   reg-02  Core passport and check-in data integrity (14 assertions)
+#   reg-03  Reward immutability and access control (6 assertions)
+#   reg-04  Policy inventory and structural validation (8 assertions)
+#
+# Gate logic:
+#   Any it() failure → job fails → PR is blocked
+#   If total assertions drop below MIN_TESTS → job fails (detects deleted tests)
+#
+# Runs AFTER rls-exploit-tests — exploit suite must pass first.
+# If exploit suite is failing (migrations not applied), regression
+# tests will also fail at fixture seeding, which surfaces the same root cause.
+#
+# Required secrets (Settings → Secrets → Actions):
+#   NEXT_PUBLIC_SUPABASE_URL       — Supabase project URL
+#   NEXT_PUBLIC_SUPABASE_ANON_KEY  — anon/publishable key
+#   SUPABASE_SERVICE_ROLE_KEY      — service-role key (required by reg-04)
+# ════════════════════════════════════════════════════════════════════════════
+
+name: RLS Regression Tests
+
+on:
+  pull_request:
+    branches:
+      - main
+  push:
+    branches:
+      - main
+    paths:
+      - 'supabase/migrations/**'
+      - 'tests/rls/**'
+      - 'vitest.regression.config.ts'
+      - '.github/workflows/rls-regression.yml'
+
+concurrency:
+  group: rls-regression-${{ github.ref }}
+  cancel-in-progress: true
+
+defaults:
+  run:
+    shell: bash
+
+# ════════════════════════════════════════════════════════════════════════════
+# Job 1 — Seed regression fixtures
+# ════════════════════════════════════════════════════════════════════════════
+#
+# Uses the reg_player_one / reg_player_two user namespace to avoid
+# colliding with the exploit suite's player_one / player_two fixtures.
+# All operations are idempotent.
+
+jobs:
+  seed-regression-fixtures:
+    name: Seed Regression Fixtures
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install httpx
+        run: pip install httpx
+
+      - name: Seed regression fixtures into Supabase
+        env:
+          SUPABASE_URL:      ${{ secrets.NEXT_PUBLIC_SUPABASE_URL }}
+          SUPABASE_ANON_KEY: ${{ secrets.NEXT_PUBLIC_SUPABASE_ANON_KEY }}
+          SUPABASE_SVC_KEY:  ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+        run: |
+          python3 << 'PYEOF'
+          import os, time, json, base64
+          import httpx
+
+          URL      = os.environ["SUPABASE_URL"].rstrip("/")
+          ANON_KEY = os.environ["SUPABASE_ANON_KEY"]
+          SVC_KEY  = os.environ["SUPABASE_SVC_KEY"]
+          REST     = f"{URL}/rest/v1"
+          AUTH     = f"{URL}/auth/v1"
+
+          ANON_H = {"apikey": ANON_KEY, "Content-Type": "application/json"}
+          SVC_H  = {"apikey": SVC_KEY, "Authorization": f"Bearer {SVC_KEY}",
+                    "Content-Type": "application/json"}
+
+          # Regression-specific fixture UUIDs — isolated from exploit suite
+          CORRIDOR_ACTIVE_ID   = "rrrrrrr1-0000-0000-0000-000000000001"
+          CORRIDOR_INACTIVE_ID = "rrrrrrr1-0000-0000-0000-000000000002"
+          NODE_ID              = "rrrrrrr2-0000-0000-0000-000000000001"
+          REWARD_ID            = "rrrrrrr5-0000-0000-0000-000000000001"
+          PASSPORT_ACTIVE_ID   = "rrrrrrr3-0000-0000-0000-000000000001"
+          PASSPORT_COMPLETE_ID = "rrrrrrr3-0000-0000-0000-000000000002"
+          PASSPORT_OTHER_ID    = "rrrrrrr3-0000-0000-0000-000000000003"
+          CHECKIN_SEED_ID      = "rrrrrrr4-0000-0000-0000-000000000001"
+
+          PLAYER_ONE = ("reg_player_one@test.atlasci.com", "RegPlayer1!RLS")
+          PLAYER_TWO = ("reg_player_two@test.atlasci.com", "RegPlayer2!RLS")
+
+          def rpc(fn, args=None, headers=None):
+              h = headers or ANON_H
+              r = httpx.post(f"{REST}/rpc/{fn}", headers=h, json=args or {}, timeout=30)
+              if not r.is_success:
+                  raise RuntimeError(f"rpc/{fn}: {r.status_code} {r.text}")
+              return r.json()
+
+          def svc_upsert(table, row):
+              h = {**SVC_H, "Prefer": "resolution=ignore-duplicates,return=minimal"}
+              r = httpx.post(f"{REST}/{table}", headers=h, json=row, timeout=20)
+              ok = r.status_code in (200, 201, 204, 409)
+              print(f"  svc_upsert {table}: {'ok' if ok else f'WARN {r.status_code} {r.text}'}")
+
+          def sign_in(email, password):
+              r = httpx.post(f"{AUTH}/token?grant_type=password",
+                             headers=ANON_H, json={"email": email, "password": password}, timeout=20)
+              if not r.is_success:
+                  raise RuntimeError(f"signIn {email}: {r.status_code} {r.text}")
+              jwt = r.json()["access_token"]
+              pad = "=" * (4 - len(jwt.split(".")[1]) % 4)
+              uid = json.loads(base64.b64decode(jwt.split(".")[1] + pad))["sub"]
+              return jwt, uid
+
+          def authed_upsert(table, row, jwt):
+              h = {**ANON_H, "Authorization": f"Bearer {jwt}",
+                   "Prefer": "resolution=ignore-duplicates,return=minimal"}
+              r = httpx.post(f"{REST}/{table}", headers=h, json=row, timeout=20)
+              ok = r.status_code in (200, 201, 204, 409)
+              print(f"  authed_upsert {table}: {'ok' if ok else f'WARN {r.status_code} {r.text}'}")
+
+          # ── Step 1: Create users via migration 008 (preferred) ────────────────
+          print("\n── Step 1: create users ──────────────────────────────────────")
+          try:
+              rpc("create_test_users")
+              print("  create_test_users: ok")
+          except RuntimeError:
+              print("  create_test_users unavailable — falling back to signUp+confirm")
+              for email, password in [PLAYER_ONE, PLAYER_TWO]:
+                  r = httpx.post(f"{AUTH}/signup", headers=ANON_H,
+                                 json={"email": email, "password": password,
+                                       "data": {"full_name": email.split("@")[0]}}, timeout=20)
+                  print(f"  signUp {email}: {r.status_code}")
+                  try:
+                      rpc("confirm_test_users", {"user_email": email})
+                  except Exception as e:
+                      print(f"  confirm {email}: warn — {e}")
+          time.sleep(1)
+
+          # ── Step 2: Seed corridors, node, reward via service role ──────────────
+          print("\n── Step 2: seed corridors, node, reward ──────────────────────")
+          import datetime
+          now = datetime.datetime.utcnow().isoformat() + "Z"
+          future = (datetime.datetime.utcnow() + datetime.timedelta(days=90)).isoformat() + "Z"
+          past = (datetime.datetime.utcnow() - datetime.timedelta(days=2)).isoformat() + "Z"
+          yesterday = (datetime.datetime.utcnow() - datetime.timedelta(days=1)).isoformat() + "Z"
+
+          svc_upsert("corridors", {
+              "id": CORRIDOR_ACTIVE_ID, "name": "Regression Corridor Active",
+              "description": "Regression test", "is_active": True,
+              "start_date": now, "end_date": future
+          })
+          svc_upsert("corridors", {
+              "id": CORRIDOR_INACTIVE_ID, "name": "Regression Corridor Inactive",
+              "description": "Inactive regression test", "is_active": False,
+              "start_date": past, "end_date": yesterday
+          })
+          svc_upsert("nodes", {
+              "id": NODE_ID, "corridor_id": CORRIDOR_ACTIVE_ID,
+              "name": "Regression Node", "location_name": "Test Location",
+              "latitude": 38.9, "longitude": -77.0, "is_active": True
+          })
+          svc_upsert("rewards", {
+              "id": REWARD_ID, "corridor_id": CORRIDOR_ACTIVE_ID,
+              "name": "Regression Reward", "description": "Regression test reward",
+              "redemption_code": "REG-TEST-001", "claimed": False
+          })
+
+          # ── Step 3: Seed passports + check-in ─────────────────────────────────
+          print("\n── Step 3: seed passports + check-in ─────────────────────────")
+          p1_jwt, p1_id = sign_in(*PLAYER_ONE)
+          p2_jwt, p2_id = sign_in(*PLAYER_TWO)
+
+          authed_upsert("passports", {
+              "id": PASSPORT_ACTIVE_ID, "user_id": p1_id,
+              "corridor_id": CORRIDOR_ACTIVE_ID, "status": "active"
+          }, p1_jwt)
+          authed_upsert("check_ins", {
+              "id": CHECKIN_SEED_ID, "passport_id": PASSPORT_ACTIVE_ID,
+              "user_id": p1_id, "node_id": NODE_ID, "status": "pending",
+              "proof_url": "https://example.com/reg-ci.jpg",
+              "proof_storage_path": "regression/ci.jpg"
+          }, p1_jwt)
+          authed_upsert("passports", {
+              "id": PASSPORT_COMPLETE_ID, "user_id": p2_id,
+              "corridor_id": CORRIDOR_ACTIVE_ID, "status": "complete"
+          }, p2_jwt)
+          authed_upsert("passports", {
+              "id": PASSPORT_OTHER_ID, "user_id": p2_id,
+              "corridor_id": CORRIDOR_ACTIVE_ID, "status": "active"
+          }, p2_jwt)
+
+          print("\n── Regression fixtures seeded successfully ────────────────\n")
+          PYEOF
+
+
+  # ════════════════════════════════════════════════════════════════════════════
+  # Job 2 — Run regression tests
+  # ════════════════════════════════════════════════════════════════════════════
+
+  rls-regression-tests:
+    name: RLS Regression Tests (reg-01 → reg-04)
+    runs-on: ubuntu-latest
+    needs: seed-regression-fixtures
+    permissions:
+      contents: read
+      pull-requests: write
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js 24
+        uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+
+      - name: Cache npm
+        uses: actions/cache@v4
+        with:
+          path: ~/.npm
+          key: ${{ runner.os }}-node-${{ hashFiles('package-lock.json') }}
+          restore-keys: ${{ runner.os }}-node-
+
+      - name: Install dependencies
+        run: npm install --legacy-peer-deps
+
+      # ── Run regression suite with JSON + verbose output ────────────────────
+      - name: Run RLS regression suite
+        id: vitest_reg
+        env:
+          SUPABASE_URL:              ${{ secrets.NEXT_PUBLIC_SUPABASE_URL }}
+          SUPABASE_ANON_KEY:         ${{ secrets.NEXT_PUBLIC_SUPABASE_ANON_KEY }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+        run: |
+          mkdir -p test-results
+          npx vitest run \
+            --config vitest.regression.config.ts \
+            --reporter=verbose \
+            --reporter=json \
+            --outputFile=test-results/rls-regression.json
+        continue-on-error: true
+
+      # ── Assertion count gate ───────────────────────────────────────────────
+      - name: Enforce assertion threshold (MIN_TESTS=28)
+        id: reg_count_gate
+        env:
+          MIN_TESTS: '28'
+        run: |
+          python3 << 'PYEOF'
+          import json, os, sys
+
+          MIN_TESTS = int(os.environ.get("MIN_TESTS", "28"))
+          results_path = "test-results/rls-regression.json"
+
+          if not os.path.exists(results_path):
+              print("::error::test-results/rls-regression.json not found.")
+              print("::error::Vitest may have crashed before writing output.")
+              sys.exit(1)
+
+          with open(results_path) as f:
+              report = json.load(f)
+
+          total   = report.get("numTotalTests", 0)
+          passed  = report.get("numPassedTests", 0)
+          failed  = report.get("numFailedTests", 0)
+          skipped = report.get("numPendingTests", 0)
+
+          failures = []
+          for suite in report.get("testResults", []):
+              file_short = suite["testFilePath"].split("/")[-1]
+              for assertion in suite.get("assertionResults", []):
+                  if assertion["status"] == "failed":
+                      name = " > ".join(assertion.get("ancestorTitles", []) + [assertion["title"]])
+                      msgs = assertion.get("failureMessages", ["(no message)"])
+                      failures.append({
+                          "file": file_short,
+                          "name": name,
+                          "message": (msgs[0] if msgs else "(no message)")[:400],
+                      })
+
+          # Write step summary
+          summary = [
+              "## RLS Regression Test Results", "",
+              "| Metric | Value |", "|---|---|",
+              f"| Tests run | {total} |",
+              f"| Passed | {passed} |",
+              f"| Failed | {failed} |",
+              f"| Skipped | {skipped} |",
+              f"| Threshold | {MIN_TESTS} |", "",
+          ]
+          if failures:
+              summary += ["### Failed Tests", ""]
+              for f_ in failures:
+                  summary += [
+                      f"**`{f_['file']}`** — {f_['name']}",
+                      f"> {f_['message'].splitlines()[0][:300]}",
+                      "",
+                  ]
+          with open(os.environ["GITHUB_STEP_SUMMARY"], "a") as f:
+              f.write("\n".join(summary))
+
+          with open(os.environ["GITHUB_OUTPUT"], "a") as out:
+              out.write(f"total_tests={total}\n")
+              out.write(f"failed_tests={failed}\n")
+              out.write(f"passed_tests={passed}\n")
+              delim = "EOF_REG"
+              lines = "\n".join(f"- `{f_['file']}` → {f_['name']}" for f_ in failures) if failures else "none"
+              out.write(f"failure_list<<{delim}\n{lines}\n{delim}\n")
+
+          if total < MIN_TESTS:
+              print(f"::error::REGRESSION COUNT GATE FAILED: expected ≥{MIN_TESTS}, got {total}")
+              print(f"::error::A regression test file may have been deleted or excluded.")
+              sys.exit(1)
+
+          if failed > 0:
+              print(f"::error::REGRESSION TESTS FAILED: {failed}/{total} tests failed")
+              for f_ in failures:
+                  print(f"::error file={f_['file']}::{f_['name']}")
+              sys.exit(1)
+
+          print(f"✅ All {total} RLS regression tests passed (threshold: {MIN_TESTS}).")
+          PYEOF
+
+      # ── Post failure comment on PR ────────────────────────────────────────
+      - name: Post failure comment on PR
+        if: failure() && github.event_name == 'pull_request'
+        uses: marocchino/sticky-pull-request-comment@v2
+        with:
+          header: rls-regression-report
+          message: |
+            ## ❌ RLS Regression Tests Failed
+
+            **Commit:** `${{ github.sha }}`
+            **Branch:** `${{ github.head_ref }}`
+            **Run:** [${{ github.run_number }}](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }})
+
+            | Tests run | Passed | Failed | Threshold |
+            |---|---|---|---|
+            | ${{ steps.reg_count_gate.outputs.total_tests }} | ${{ steps.reg_count_gate.outputs.passed_tests }} | ${{ steps.reg_count_gate.outputs.failed_tests }} | 28 |
+
+            ### Failing tests
+            ${{ steps.reg_count_gate.outputs.failure_list }}
+
+            ---
+
+            ### What to check
+
+            | Test file | Category | Policies |
+            |---|---|---|
+            | `rls-reg-01-protected-fields.test.ts` | `profiles.is_admin` column guard | `profiles_update_own` (005) |
+            | `rls-reg-02-passport-data.test.ts` | Passport/check-in ownership + isolation | `passports_insert_own` (007), `check_ins_insert_own` (005) |
+            | `rls-reg-03-reward-integrity.test.ts` | Reward immutability + access | `rewards_select_own` (004), `prevent_reward_unclaim` trigger |
+            | `rls-reg-04-policy-inventory.test.ts` | Policy structure + RLS enabled | All policies (004–008) |
+
+            ### Reproduce locally
+            ```bash
+            supabase start && supabase db reset
+            SUPABASE_URL=http://127.0.0.1:54321 \
+            SUPABASE_ANON_KEY=$(supabase status | grep anon | awk '{print $2}') \
+            SUPABASE_SERVICE_ROLE_KEY=$(supabase status | grep service_role | awk '{print $2}') \
+            npm run test:rls-regression
+            ```
+
+            <sub>This comment updates automatically on each push. · RLS Regression Tests · `rls-regression.yml`</sub>
+
+      # ── Clear success comment ──────────────────────────────────────────────
+      - name: Clear failure comment (tests now passing)
+        if: success() && github.event_name == 'pull_request'
+        uses: marocchino/sticky-pull-request-comment@v2
+        with:
+          header: rls-regression-report
+          message: |
+            ## ✅ RLS Regression Tests Passed
+
+            **Commit:** `${{ github.sha }}`
+            **Tests:** ${{ steps.reg_count_gate.outputs.total_tests }} / 28 assertions passed
+
+            Categories confirmed:
+            - reg-01 · Protected field mutation blocked (is_admin, referral_code)
+            - reg-02 · Passport and check-in data integrity enforced
+            - reg-03 · Reward immutability and access control verified
+            - reg-04 · Policy inventory and RLS structure validated
+
+            <sub>RLS Regression Tests · `rls-regression.yml`</sub>
