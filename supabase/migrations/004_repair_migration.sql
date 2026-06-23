@@ -80,6 +80,28 @@ ALTER TABLE public.check_ins ADD COLUMN IF NOT EXISTS reviewed_at        TIMESTA
 ALTER TABLE public.check_ins ADD COLUMN IF NOT EXISTS submitted_at       TIMESTAMPTZ NOT NULL DEFAULT NOW();
 ALTER TABLE public.check_ins ADD COLUMN IF NOT EXISTS created_at         TIMESTAMPTZ NOT NULL DEFAULT NOW();
 
+-- ─── Unique Constraints on patched columns ─────────────────
+
+DO $$ BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_constraint
+    WHERE conname = 'nodes_corridor_id_sequence_key'
+      AND conrelid = 'public.nodes'::regclass
+  ) THEN
+    ALTER TABLE public.nodes ADD CONSTRAINT nodes_corridor_id_sequence_key UNIQUE (corridor_id, sequence);
+  END IF;
+END $$;
+
+DO $$ BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_constraint
+    WHERE conname = 'check_ins_passport_id_node_id_key'
+      AND conrelid = 'public.check_ins'::regclass
+  ) THEN
+    ALTER TABLE public.check_ins ADD CONSTRAINT check_ins_passport_id_node_id_key UNIQUE (passport_id, node_id);
+  END IF;
+END $$;
+
 -- ─── Indexes ───────────────────────────────────────────────
 
 CREATE INDEX IF NOT EXISTS idx_nodes_corridor_id      ON public.nodes(corridor_id);
