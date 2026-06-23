@@ -205,17 +205,17 @@ jobs:
 
       # ── 3. Seed RLS test fixtures (idempotent) ──────────────────────────────
       #
-      # Creates the two test users and their deterministic seed data without
-      # requiring a JWT-format service-role key.
+      # FIX (2026-06-23): replaced signUp → confirm_test_users with
+      # rpc/create_test_users (migration 008, SECURITY DEFINER).
+      # create_test_users inserts directly into auth.users — no email sent,
+      # no GoTrue rate-limit hit. signUp was causing 429 over_email_send_rate_limit
+      # on every CI run against the free-tier Supabase project.
       #
-      # Strategy (requires migration 006_test_helpers.sql applied to Supabase):
-      #   a) signUp via /auth/v1/signup (anon key — creates unconfirmed user)
-      #   b) POST /rest/v1/rpc/confirm_test_users (SECURITY DEFINER, anon key)
-      #      → sets email_confirmed_at in auth.users for CI allow-listed emails
-      #   c) POST /rest/v1/rpc/seed_ci_fixtures (SECURITY DEFINER, anon key)
-      #      → upserts corridor / node / reward rows
-      #   d) signIn to get player JWTs, extract profile UUIDs from JWT sub claim
-      #   e) Seed passports + check-in rows via each player's own JWT
+      # Strategy:
+      #   a) rpc/create_test_users   → migration 008, inserts into auth.users directly
+      #   b) rpc/seed_ci_fixtures    → migration 006, upserts corridor/node/reward
+      #   c) rpc/seed_ci_fixtures_v2 → adds inactive corridor (exploit-05, non-fatal)
+      #   d) signIn → seed passports + check-in via each player's own JWT
       - name: Seed RLS test fixtures
         env:
           SUPABASE_URL:      ${{ secrets.NEXT_PUBLIC_SUPABASE_URL }}
@@ -240,40 +240,18 @@ jobs:
           CORRIDOR_ID          = "aaaaaaaa-0000-0000-0000-000000000001"
           NODE_ID              = "bbbbbbbb-0000-0000-0000-000000000001"
 
-          def sign_up(email, password, full_name):
-              """Create user via signUp — 422/already-registered = idempotent."""
-              r = httpx.post(
-                  f"{AUTH}/signup",
-                  headers=ANON_HEADERS,
-                  json={"email": email, "password": password,
-                        "data": {"full_name": full_name}},
-                  timeout=20,
-              )
-              if r.status_code == 422:
-                  print(f"  signUp {email}: 422 (already exists — ok)")
-                  return
-              if r.status_code == 400:
-                  body = r.json()
-                  msg = body.get("msg", body.get("message", ""))
-                  if "already" in msg.lower():
-                      print(f"  signUp {email}: already registered (ok)")
-                      return
-              if r.status_code not in (200, 201):
-                  raise RuntimeError(f"signUp {email}: {r.status_code} {r.text}")
-              print(f"  signUp {email}: {r.status_code}")
-
-          def confirm_user(email):
-              """Confirm user via SECURITY DEFINER RPC (migration 006)."""
-              r = httpx.post(
-                  f"{REST}/rpc/confirm_test_users",
-                  headers=ANON_HEADERS,
-                  json={"user_email": email},
-                  timeout=20,
-              )
+          def rpc(fn, args=None, fatal=True):
+              r = httpx.post(f"{REST}/rpc/{fn}", headers=ANON_HEADERS,
+                             json=args or {}, timeout=30)
               if not r.is_success:
-                  raise RuntimeError(f"confirm_test_users({email}): {r.status_code} {r.text}")
+                  msg = f"  [rpc] {fn}: {r.status_code} {r.text}"
+                  if fatal:
+                      raise RuntimeError(msg)
+                  print(f"{msg} (non-fatal)")
+                  return None
               result = r.json()
-              print(f"  confirm {email}: {result.get('status')} (rows updated: {result.get('updated')})")
+              print(f"  [rpc] {fn}: ok → {result}")
+              return result
 
           def sign_in(email, password):
               """Sign in and return (access_token, user_id)."""
@@ -287,7 +265,6 @@ jobs:
                   raise RuntimeError(f"signIn {email}: {r.status_code} {r.text}")
               data = r.json()
               jwt = data["access_token"]
-              # Decode sub from JWT payload
               padding = "=" * (4 - len(jwt.split(".")[1]) % 4)
               payload = json.loads(base64.b64decode(jwt.split(".")[1] + padding).decode())
               return jwt, payload["sub"]
@@ -309,39 +286,27 @@ jobs:
               else:
                   print(f"  upsert {table}: ok")
 
-          # ── a) Create users ──────────────────────────────────────────────────
-          print("Creating test users via signUp...")
-          sign_up("player_one_rls@test.atlasci.com", "TestPlayer1!RLS", "CI Player One")
-          sign_up("player_two_rls@test.atlasci.com", "TestPlayer2!RLS", "CI Player Two")
+          # ── a) Create users via DB function (migration 008) ──────────────────
+          # Inserts directly into auth.users — no email, no GoTrue rate limits.
+          print("Creating test users via rpc/create_test_users (no email sent)...")
+          rpc("create_test_users")
+          time.sleep(1)  # let profiles trigger materialise
 
-          # ── b) Confirm users via SECURITY DEFINER RPC ────────────────────────
-          print("Confirming users via rpc/confirm_test_users...")
-          confirm_user("player_one_rls@test.atlasci.com")
-          confirm_user("player_two_rls@test.atlasci.com")
-
-          # Give the profiles trigger ~1 s to materialise after confirmation
-          time.sleep(1)
-
-          # ── c) Seed corridor / node / reward via RPC ─────────────────────────
+          # ── b) Seed corridor / node / reward via RPC ─────────────────────────
           print("Seeding fixtures via rpc/seed_ci_fixtures...")
-          r = httpx.post(
-              f"{REST}/rpc/seed_ci_fixtures",
-              headers=ANON_HEADERS,
-              json={},
-              timeout=20,
-          )
-          if not r.is_success:
-              raise RuntimeError(f"seed_ci_fixtures: {r.status_code} {r.text}")
-          print(f"  seed_ci_fixtures: {r.json().get('status')}")
+          rpc("seed_ci_fixtures")
 
-          # ── d) Sign in to get player JWTs and profile UUIDs ──────────────────
+          # ── b2) Seed inactive corridor (exploit-05, non-fatal) ───────────────
+          rpc("seed_ci_fixtures_v2", fatal=False)
+
+          # ── c) Sign in to get player JWTs and profile UUIDs ──────────────────
           print("Signing in as both players...")
           p1_jwt, p1_id = sign_in("player_one_rls@test.atlasci.com", "TestPlayer1!RLS")
           p2_jwt, p2_id = sign_in("player_two_rls@test.atlasci.com", "TestPlayer2!RLS")
           print(f"  player_one id: {p1_id}")
           print(f"  player_two id: {p2_id}")
 
-          # ── e) Seed passports + check-in via each player's own JWT ────────────
+          # ── d) Seed passports + check-in via each player's own JWT ────────────
           print("Seeding passports and check-in...")
           authed_upsert("passports", {
               "id": PASSPORT_ACTIVE_ID,
@@ -518,3 +483,4 @@ jobs:
             See `atlas_passport_rls_audit.md` for migration 005 SQL fixes.
 
             <sub>Generated by RLS Exploit Tests job · `tests/rls/exploits/`</sub>
+

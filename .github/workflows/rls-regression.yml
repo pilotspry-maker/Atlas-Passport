@@ -142,23 +142,14 @@ jobs:
               ok = r.status_code in (200, 201, 204, 409)
               print(f"  authed_upsert {table}: {'ok' if ok else f'WARN {r.status_code} {r.text}'}")
 
-          # ── Step 1: Create users via migration 008 (preferred) ────────────────
-          print("\n── Step 1: create users ──────────────────────────────────────")
-          try:
-              rpc("create_test_users")
-              print("  create_test_users: ok")
-          except RuntimeError:
-              print("  create_test_users unavailable — falling back to signUp+confirm")
-              for email, password in [PLAYER_ONE, PLAYER_TWO]:
-                  r = httpx.post(f"{AUTH}/signup", headers=ANON_H,
-                                 json={"email": email, "password": password,
-                                       "data": {"full_name": email.split("@")[0]}}, timeout=20)
-                  print(f"  signUp {email}: {r.status_code}")
-                  try:
-                      rpc("confirm_test_users", {"user_email": email})
-                  except Exception as e:
-                      print(f"  confirm {email}: warn — {e}")
-          time.sleep(1)
+          # ── Step 1: Create users via migration 008 ──────────────────────────
+          # FIX (2026-06-23): removed signUp fallback — it caused 429
+          # over_email_send_rate_limit on every CI run. create_test_users
+          # (migration 008) inserts directly into auth.users with no email sent.
+          # If this RPC fails, migrations are not applied and CI should fail loudly.
+          print("\n── Step 1: create users (DB → no GoTrue, no email) ───────────")
+          rpc("create_test_users")
+          time.sleep(1)  # let profiles trigger materialise
 
           # ── Step 2: Seed corridors, node, reward via service role ──────────────
           print("\n── Step 2: seed corridors, node, reward ──────────────────────")
