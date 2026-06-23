@@ -67,6 +67,7 @@ CREATE TABLE IF NOT EXISTS public.rewards (
 
 -- ─── Patch check_ins (depends on passports existing above) ─
 
+ALTER TABLE public.check_ins ADD COLUMN IF NOT EXISTS user_id            UUID REFERENCES public.profiles(id);
 ALTER TABLE public.check_ins ADD COLUMN IF NOT EXISTS passport_id        UUID REFERENCES public.passports(id) ON DELETE CASCADE;
 ALTER TABLE public.check_ins ADD COLUMN IF NOT EXISTS node_id            UUID REFERENCES public.nodes(id);
 ALTER TABLE public.check_ins ADD COLUMN IF NOT EXISTS status             TEXT NOT NULL DEFAULT 'pending';
@@ -77,6 +78,7 @@ ALTER TABLE public.check_ins ADD COLUMN IF NOT EXISTS admin_notes        TEXT;
 ALTER TABLE public.check_ins ADD COLUMN IF NOT EXISTS reviewed_by        UUID REFERENCES public.profiles(id);
 ALTER TABLE public.check_ins ADD COLUMN IF NOT EXISTS reviewed_at        TIMESTAMPTZ;
 ALTER TABLE public.check_ins ADD COLUMN IF NOT EXISTS submitted_at       TIMESTAMPTZ NOT NULL DEFAULT NOW();
+ALTER TABLE public.check_ins ADD COLUMN IF NOT EXISTS created_at         TIMESTAMPTZ NOT NULL DEFAULT NOW();
 
 -- ─── Indexes ───────────────────────────────────────────────
 
