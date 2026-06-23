@@ -21,8 +21,8 @@
 --     • The function is callable by the 'anon' role (public) ONLY when
 --       the calling email matches the hardcoded CI test user allow-list.
 --     • It confirms ONLY the two designated CI test accounts:
---         player_one_rls@test.atlas
---         player_two_rls@test.atlas
+--         player_one_rls@test.atlasci.com
+--         player_two_rls@test.atlasci.com
 --     • Attempting to confirm any other email raises an exception.
 --     • The function has no effect in production if those emails never
 --       sign up (they exist only in the CI fixture seeder).
@@ -40,8 +40,8 @@ SET search_path = auth, public
 AS $$
 DECLARE
   allowed_emails TEXT[] := ARRAY[
-    'player_one_rls@test.atlas',
-    'player_two_rls@test.atlas'
+    'player_one_rls@test.atlasci.com',
+    'player_two_rls@test.atlasci.com'
   ];
   affected_count INTEGER;
 BEGIN
@@ -217,7 +217,7 @@ END $$;
 --   curl -s "https://gaavynmmysdhovpatzlp.supabase.co/rest/v1/rpc/confirm_test_users" \
 --        -H "apikey: sb_publishable_1BPrFxSYIb__I7JZUbgimQ_RZcVR_oU" \
 --        -H "Content-Type: application/json" \
---        -d '{"user_email":"player_one_rls@test.atlas"}'
+--        -d '{"user_email":"player_one_rls@test.atlasci.com"}'
 --
 --   curl -s "https://gaavynmmysdhovpatzlp.supabase.co/rest/v1/rpc/seed_ci_fixtures" \
 --        -H "apikey: sb_publishable_1BPrFxSYIb__I7JZUbgimQ_RZcVR_oU" \

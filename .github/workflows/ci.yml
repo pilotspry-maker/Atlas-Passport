@@ -311,13 +311,13 @@ jobs:
 
           # ── a) Create users ──────────────────────────────────────────────────
           print("Creating test users via signUp...")
-          sign_up("player_one_rls@test.atlas", "TestPlayer1!RLS", "CI Player One")
-          sign_up("player_two_rls@test.atlas", "TestPlayer2!RLS", "CI Player Two")
+          sign_up("player_one_rls@test.atlasci.com", "TestPlayer1!RLS", "CI Player One")
+          sign_up("player_two_rls@test.atlasci.com", "TestPlayer2!RLS", "CI Player Two")
 
           # ── b) Confirm users via SECURITY DEFINER RPC ────────────────────────
           print("Confirming users via rpc/confirm_test_users...")
-          confirm_user("player_one_rls@test.atlas")
-          confirm_user("player_two_rls@test.atlas")
+          confirm_user("player_one_rls@test.atlasci.com")
+          confirm_user("player_two_rls@test.atlasci.com")
 
           # Give the profiles trigger ~1 s to materialise after confirmation
           time.sleep(1)
@@ -336,8 +336,8 @@ jobs:
 
           # ── d) Sign in to get player JWTs and profile UUIDs ──────────────────
           print("Signing in as both players...")
-          p1_jwt, p1_id = sign_in("player_one_rls@test.atlas", "TestPlayer1!RLS")
-          p2_jwt, p2_id = sign_in("player_two_rls@test.atlas", "TestPlayer2!RLS")
+          p1_jwt, p1_id = sign_in("player_one_rls@test.atlasci.com", "TestPlayer1!RLS")
+          p2_jwt, p2_id = sign_in("player_two_rls@test.atlasci.com", "TestPlayer2!RLS")
           print(f"  player_one id: {p1_id}")
           print(f"  player_two id: {p2_id}")
 

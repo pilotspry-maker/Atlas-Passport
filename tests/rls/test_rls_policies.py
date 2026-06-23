@@ -47,9 +47,9 @@ PASSPORT_ACTIVE_ID   = "dddddddd-0000-0000-0000-000000000001"
 PASSPORT_COMPLETE_ID = "dddddddd-0000-0000-0000-000000000002"
 CHECKIN_ID  = "eeeeeeee-0000-0000-0000-000000000001"
 
-PLAYER_ONE_EMAIL = "player_one_rls@test.atlas"
+PLAYER_ONE_EMAIL = "player_one_rls@test.atlasci.com"
 PLAYER_ONE_PASS  = "TestPlayer1!RLS"
-PLAYER_TWO_EMAIL = "player_two_rls@test.atlas"
+PLAYER_TWO_EMAIL = "player_two_rls@test.atlasci.com"
 PLAYER_TWO_PASS  = "TestPlayer2!RLS"
 
 
