@@ -28,13 +28,23 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: '24'
-          cache: 'npm'
 
       # ── 3. Install ───────────────────────────────────────────────────────────
+      #
+      # npm install is used instead of npm ci because:
+      # 1. @react-email packages declare React 18 peer deps (--legacy-peer-deps)
+      # 2. esbuild optional platform binaries in package-lock.json are generated
+      #    per-OS; npm ci fails when a platform entry is missing on the runner.
+      # Cache key uses package-lock.json hash for layer reuse across identical runs.
+      - name: Cache node_modules
+        uses: actions/cache@v4
+        with:
+          path: ~/.npm
+          key: ${{ runner.os }}-node-${{ hashFiles('package-lock.json') }}
+          restore-keys: ${{ runner.os }}-node-
+
       - name: Install dependencies
-        # --legacy-peer-deps required: @react-email packages declare peer deps
-        # against React 18 but are compatible with React 19 at runtime.
-        run: npm ci --legacy-peer-deps
+        run: npm install --legacy-peer-deps
 
       # ── 4. Lint ──────────────────────────────────────────────────────────────
       #
