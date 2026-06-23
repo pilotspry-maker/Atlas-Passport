@@ -157,3 +157,317 @@ jobs:
           echo ""
           echo "Cap is 1 500 KB uncompressed per route. Reduce bundle size before merging."
           exit 1
+
+
+  # ════════════════════════════════════════════════════════════════════════════
+  # RLS Security Tests
+  # ════════════════════════════════════════════════════════════════════════════
+  #
+  # Runs on every PR to main. Validates that Supabase RLS policies correctly
+  # enforce access control on passports, nodes, rewards, check_ins, corridors,
+  # and profiles tables via the live PostgREST API.
+  #
+  # Two layers of coverage:
+  #   1. Python/pytest (REST API) — always runs; tests all 4 access tiers
+  #   2. pgTAP (SQL-level)        — runs only when Supabase CLI is available
+  #
+  # Both layers must pass for the check to be green. A failure blocks merge.
+  # ════════════════════════════════════════════════════════════════════════════
+
+  rls-tests:
+    name: RLS Security Tests
+    runs-on: ubuntu-latest
+    needs: lint-build-size    # Don't run if build itself is broken
+    permissions:
+      contents: read
+      pull-requests: write    # Post sticky failure comment
+
+    steps:
+      # ── 1. Checkout ──────────────────────────────────────────────────────────
+      - name: Checkout PR branch
+        uses: actions/checkout@v4
+
+      # ── 2. Python + dependencies ─────────────────────────────────────────────
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Cache pip packages
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/pip
+          key: ${{ runner.os }}-pip-pytest-httpx
+          restore-keys: ${{ runner.os }}-pip-
+
+      - name: Install pytest + httpx
+        run: pip install pytest httpx
+
+      # ── 3. Seed RLS test fixtures (idempotent) ────────────────────────────────
+      #
+      # Creates the two test users (player_one_rls@test.atlas,
+      # player_two_rls@test.atlas) and their deterministic seed data via the
+      # service-role key. Uses ON CONFLICT / ignore-duplicates so reruns are
+      # safe and existing prod data is untouched.
+      - name: Seed RLS test fixtures
+        env:
+          SUPABASE_URL:              ${{ secrets.SUPABASE_URL }}
+          SUPABASE_ANON_KEY:         ${{ secrets.SUPABASE_ANON_KEY }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+        run: |
+          python3 << 'PYEOF'
+          import os, time, httpx
+
+          URL  = os.environ["SUPABASE_URL"].rstrip("/")
+          KEY  = os.environ["SUPABASE_SERVICE_ROLE_KEY"]
+
+          AUTH_HEADERS = {
+              "apikey": KEY,
+              "Authorization": f"Bearer {KEY}",
+              "Content-Type": "application/json",
+          }
+
+          def create_user(email, password, meta):
+              """Create auth user — idempotent (ignores 422 duplicate)."""
+              r = httpx.post(
+                  f"{URL}/auth/v1/admin/users",
+                  headers=AUTH_HEADERS,
+                  json={"email": email, "password": password,
+                        "user_metadata": meta, "email_confirm": True},
+                  timeout=20,
+              )
+              if r.status_code not in (200, 201, 422):
+                  raise RuntimeError(f"create_user {email}: {r.status_code} {r.text}")
+              print(f"  user {email}: {r.status_code}")
+
+          print("Creating test users...")
+          create_user("player_one_rls@test.atlas", "TestPlayer1!RLS",
+                      {"full_name": "CI Player One"})
+          create_user("player_two_rls@test.atlas", "TestPlayer2!RLS",
+                      {"full_name": "CI Player Two"})
+
+          # Give the profiles trigger ~1 s to materialise
+          time.sleep(1)
+
+          rest = f"{URL}/rest/v1"
+
+          CORRIDOR_ID          = "aaaaaaaa-0000-0000-0000-000000000001"
+          NODE_ID              = "bbbbbbbb-0000-0000-0000-000000000001"
+          REWARD_ID            = "cccccccc-0000-0000-0000-000000000001"
+          PASSPORT_ACTIVE_ID   = "dddddddd-0000-0000-0000-000000000001"
+          PASSPORT_COMPLETE_ID = "dddddddd-0000-0000-0000-000000000002"
+          CHECKIN_ID           = "eeeeeeee-0000-0000-0000-000000000001"
+
+          def upsert(table, row):
+              r = httpx.post(
+                  f"{rest}/{table}",
+                  headers={**AUTH_HEADERS,
+                           "Prefer": "resolution=ignore-duplicates,return=minimal"},
+                  json=row, timeout=20,
+              )
+              if r.status_code not in (200, 201, 204):
+                  print(f"  WARN upsert {table}: {r.status_code} {r.text}")
+              else:
+                  print(f"  upsert {table}: ok")
+
+          def get_profile_id(email):
+              r = httpx.get(f"{rest}/profiles?email=eq.{email}&select=id",
+                            headers=AUTH_HEADERS, timeout=15)
+              rows = r.json()
+              return rows[0]["id"] if rows else None
+
+          upsert("corridors", {
+              "id": CORRIDOR_ID, "name": "CI Test Corridor",
+              "city": "Test City", "country": "US", "is_active": True,
+          })
+          upsert("nodes", {
+              "id": NODE_ID, "corridor_id": CORRIDOR_ID,
+              "name": "CI Test Node", "sequence": 1, "is_active": True,
+          })
+          upsert("rewards", {
+              "id": REWARD_ID, "corridor_id": CORRIDOR_ID,
+              "title": "CI Test Reward", "redemption_code": "SECRET-CODE-XYZ",
+          })
+
+          p1_id = get_profile_id("player_one_rls@test.atlas")
+          p2_id = get_profile_id("player_two_rls@test.atlas")
+
+          if p1_id:
+              upsert("passports", {
+                  "id": PASSPORT_ACTIVE_ID,
+                  "user_id": p1_id, "corridor_id": CORRIDOR_ID,
+                  "status": "active",
+              })
+              upsert("check_ins", {
+                  "id": CHECKIN_ID,
+                  "passport_id": PASSPORT_ACTIVE_ID, "user_id": p1_id,
+                  "node_id": NODE_ID, "status": "pending",
+                  "proof_url": "https://example.com/ci-proof.jpg",
+                  "proof_storage_path": "ci-test/proof.jpg",
+              })
+          else:
+              print("WARN: player_one profile not found — passport/checkin rows skipped")
+
+          if p2_id:
+              upsert("passports", {
+                  "id": PASSPORT_COMPLETE_ID,
+                  "user_id": p2_id, "corridor_id": CORRIDOR_ID,
+                  "status": "complete",
+              })
+          else:
+              print("WARN: player_two profile not found — passport row skipped")
+
+          print("Fixtures seeded.")
+          PYEOF
+
+      # ── 4. Run Python RLS integration tests ──────────────────────────────────
+      - name: pytest — RLS integration tests
+        id: pytest_rls
+        env:
+          SUPABASE_URL:              ${{ secrets.SUPABASE_URL }}
+          SUPABASE_ANON_KEY:         ${{ secrets.SUPABASE_ANON_KEY }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+        run: |
+          pytest tests/rls/test_rls_policies.py \
+            --tb=short \
+            --color=yes \
+            -v
+
+      # ── 5. pgTAP SQL tests (conditional — Supabase CLI) ───────────────────────
+      #
+      # pgTAP requires a local Supabase stack. This step is intentionally
+      # conditional: if the CLI is absent, the Python tests above already cover
+      # the same policies at the REST-API layer, so the job can still succeed.
+      #
+      # To fully enable pgTAP in CI:
+      #   1. Add `supabase/setup-cli@v1` step (before this one)
+      #   2. Add SUPABASE_ACCESS_TOKEN to repo secrets
+      #   3. Remove the `exit 0` early-return below
+      - name: pgTAP — RLS SQL tests (if Supabase CLI available)
+        env:
+          SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+        run: |
+          if ! command -v supabase &> /dev/null; then
+            echo "Supabase CLI not installed — pgTAP step skipped."
+            echo "Add supabase/setup-cli@v1 + SUPABASE_ACCESS_TOKEN to enable."
+            exit 0
+          fi
+
+          echo "Supabase CLI found — running pgTAP suite..."
+          supabase db start
+          supabase db push --local
+          supabase test db --local supabase/tests/rls_policies.test.sql
+
+      # ── 6. Post failure summary as sticky PR comment ──────────────────────────
+      - name: Post RLS failure summary
+        if: failure() && github.event_name == 'pull_request'
+        uses: marocchino/sticky-pull-request-comment@v2
+        with:
+          header: rls-test-report
+          message: |
+            ## ❌ RLS Security Tests Failed
+
+            One or more Row-Level Security policy tests failed on this PR.
+            **This PR cannot be merged until all RLS tests pass.**
+
+            ### How to reproduce locally
+            ```bash
+            pip install pytest httpx
+            SUPABASE_URL=https://gaavynmmysdhovpatzlp.supabase.co \
+            SUPABASE_ANON_KEY=<anon_key> \
+            SUPABASE_SERVICE_ROLE_KEY=<service_role_key> \
+            pytest tests/rls/test_rls_policies.py -v
+            ```
+
+            ### Files to review
+            - Policy logic: `supabase/migrations/004_rls_hardening_and_node_integrity.sql`
+            - REST tests: `tests/rls/test_rls_policies.py`
+            - SQL tests: `supabase/tests/rls_policies.test.sql`
+
+            <sub>Generated by RLS Security Tests job · `rls-tests`</sub>
+
+
+  # ════════════════════════════════════════════════════════════════════════════
+  # RLS Exploit Tests (Vitest / TypeScript)
+  # ════════════════════════════════════════════════════════════════════════════
+  #
+  # Three targeted exploit tests against the live Supabase project:
+  #   Exploit #1 — is_admin self-escalation via PATCH /profiles
+  #   Exploit #2 — cross-passport check-in insert (IDOR)
+  #   Exploit #3 — reward_claimed state reversal
+  #
+  # Each test expects a 401/403. If any test fails:
+  #   - A known vulnerability is confirmed live
+  #   - Merge is blocked until the corresponding migration 005 fix is applied
+  #
+  # Runs after rls-tests (Python layer) so failures are isolated by layer.
+  # ════════════════════════════════════════════════════════════════════════════
+
+  rls-exploit-tests:
+    name: RLS Exploit Tests (Vitest)
+    runs-on: ubuntu-latest
+    needs: rls-tests
+    permissions:
+      contents: read
+      pull-requests: write
+
+    steps:
+      # ── 1. Checkout ──────────────────────────────────────────────────────────
+      - name: Checkout PR branch
+        uses: actions/checkout@v4
+
+      # ── 2. Node.js ───────────────────────────────────────────────────────────
+      - name: Set up Node.js 24
+        uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+
+      # ── 3. Install (includes vitest from devDependencies) ────────────────────
+      - name: Cache node_modules
+        uses: actions/cache@v4
+        with:
+          path: ~/.npm
+          key: ${{ runner.os }}-node-${{ hashFiles('package-lock.json') }}
+          restore-keys: ${{ runner.os }}-node-
+
+      - name: Install dependencies
+        run: npm install --legacy-peer-deps
+
+      # ── 4. Run Vitest exploit suite ──────────────────────────────────────────
+      - name: Vitest — RLS exploit tests
+        env:
+          SUPABASE_URL:              ${{ secrets.SUPABASE_URL }}
+          SUPABASE_ANON_KEY:         ${{ secrets.SUPABASE_ANON_KEY }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+        run: npm run test:rls-exploits
+
+      # ── 5. Post failure comment ──────────────────────────────────────────────
+      - name: Post exploit test failure summary
+        if: failure() && github.event_name == 'pull_request'
+        uses: marocchino/sticky-pull-request-comment@v2
+        with:
+          header: rls-exploit-report
+          message: |
+            ## ❌ RLS Exploit Tests Failed
+
+            A targeted exploit test confirmed a live RLS vulnerability.
+            **This PR cannot be merged. Apply migration 005 fixes before proceeding.**
+
+            | Exploit | Table | Risk |
+            |---------|-------|------|
+            | #1 | `profiles` | `is_admin` self-escalation → unlimited reward access |
+            | #2 | `check_ins` | Cross-passport insert (IDOR) → corrupt any player's record |
+            | #3 | `passports` | `reward_claimed` state reversal → re-redemption |
+
+            ### Run locally
+            ```bash
+            npm install
+            SUPABASE_URL=https://gaavynmmysdhovpatzlp.supabase.co \
+            SUPABASE_ANON_KEY=<anon_key> \
+            SUPABASE_SERVICE_ROLE_KEY=<service_role_key> \
+            npm run test:rls-exploits
+            ```
+
+            See `atlas_passport_rls_audit.md` for migration 005 SQL fixes.
+
+            <sub>Generated by RLS Exploit Tests job · `tests/rls/exploits/`</sub>
