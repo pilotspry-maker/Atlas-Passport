@@ -12,6 +12,7 @@ on:
       - 'deps/**'
       - 'feat/**'
       - 'fix/**'
+      - 'chore/**'
 
 jobs:
   verify-env-vars:
