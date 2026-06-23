@@ -48,6 +48,7 @@ export default function EditCorridorPage() {
     setLoading(false)
   }, [corridorId])
 
+  // eslint-disable-next-line react-hooks/set-state-in-effect -- setState calls are inside an async useCallback, not synchronous within the effect body
   useEffect(() => { load() }, [load])
 
   async function saveCorridor(e: React.FormEvent) {

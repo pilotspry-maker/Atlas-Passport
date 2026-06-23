@@ -36,8 +36,10 @@ export default async function CheckInPage({ params, searchParams }: Props) {
 
   if (!node || !passport) notFound()
 
+  // eslint-disable-next-line react-hooks/purity -- server component async function, Date.now() evaluated once on the server
+  const now = Date.now()
   const isExpired = passport.status !== 'active' ||
-    new Date(passport.expires_at).getTime() < Date.now()
+    new Date(passport.expires_at).getTime() < now
 
   if (isExpired) redirect('/passport')
 
