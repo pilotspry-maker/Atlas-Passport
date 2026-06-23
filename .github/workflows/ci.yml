@@ -218,7 +218,7 @@ jobs:
       #   e) Seed passports + check-in rows via each player's own JWT
       - name: Seed RLS test fixtures
         env:
-          SUPABASE_URL:      ${{ secrets.SUPABASE_URL }}
+          SUPABASE_URL:      ${{ secrets.NEXT_PUBLIC_SUPABASE_URL }}
           SUPABASE_ANON_KEY: ${{ secrets.NEXT_PUBLIC_SUPABASE_ANON_KEY }}
         run: |
           python3 << 'EOF'
@@ -368,8 +368,8 @@ jobs:
       - name: pytest — RLS integration tests
         id: pytest_rls
         env:
-          SUPABASE_URL:              ${{ secrets.SUPABASE_URL }}
-          SUPABASE_ANON_KEY:         ${{ secrets.SUPABASE_ANON_KEY }}
+          SUPABASE_URL:              ${{ secrets.NEXT_PUBLIC_SUPABASE_URL }}
+          SUPABASE_ANON_KEY:         ${{ secrets.NEXT_PUBLIC_SUPABASE_ANON_KEY }}
           SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
         run: |
           pytest tests/rls/test_rls_policies.py \
@@ -480,9 +480,10 @@ jobs:
       # ── 4. Run Vitest exploit suite ──────────────────────────────────────────
       - name: Vitest — RLS exploit tests
         env:
-          SUPABASE_URL:      ${{ secrets.SUPABASE_URL }}
-          SUPABASE_ANON_KEY: ${{ secrets.NEXT_PUBLIC_SUPABASE_ANON_KEY }}
-          # SUPABASE_SERVICE_ROLE_KEY intentionally omitted — setup.ts uses
+          SUPABASE_URL:              ${{ secrets.NEXT_PUBLIC_SUPABASE_URL }}
+          SUPABASE_ANON_KEY:         ${{ secrets.NEXT_PUBLIC_SUPABASE_ANON_KEY }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+          # Note: SERVICE_ROLE_KEY required — client.ts calls requireEnv() unconditionally — setup.ts uses
           # signUp + rpc/confirm_test_users (SECURITY DEFINER) instead of
           # the Admin API. No service-role key required at runtime.
         run: npm run test:rls-exploits

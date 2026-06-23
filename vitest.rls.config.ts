@@ -35,8 +35,9 @@ export default defineConfig({
     testTimeout: 30_000,
     hookTimeout: 30_000,
 
-    // Detailed reporter so CI logs show full failure context
-    reporter: "verbose",
+    // Detailed reporters so CI logs show full failure context
+    // Note: Vitest 2.x uses 'reporters' (plural) not 'reporter'
+    reporters: ["verbose"],
 
     // globalSetup seeds the test fixtures once before all tests run
     globalSetup: ["tests/rls/exploits/setup.ts"],
