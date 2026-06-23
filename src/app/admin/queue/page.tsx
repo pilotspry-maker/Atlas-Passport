@@ -76,9 +76,12 @@ export default async function AdminQueuePage() {
         </div>
       ) : (
         <div className="space-y-3">
-          {checkIns.map(ci => {
+          {(() => {
+            // eslint-disable-next-line react-hooks/purity -- server component async function, Date.now() is evaluated once during server render, never re-renders
+            const now = Date.now()
+            return checkIns.map(ci => {
             const isExpiringSoon = ci.passport
-              ? new Date(ci.passport.expires_at).getTime() - Date.now() < 6 * 60 * 60 * 1000
+              ? new Date(ci.passport.expires_at).getTime() - now < 6 * 60 * 60 * 1000
               : false
 
             return (
@@ -118,7 +121,8 @@ export default async function AdminQueuePage() {
                 </div>
               </Link>
             )
-          })}
+          })
+          })()}
         </div>
       )}
     </div>

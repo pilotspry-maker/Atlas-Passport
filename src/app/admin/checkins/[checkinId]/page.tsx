@@ -25,6 +25,8 @@ interface CheckInDetail {
 export default function CheckInReviewPage() {
   const { checkinId } = useParams<{ checkinId: string }>()
   const router = useRouter()
+  // eslint-disable-next-line react-hooks/purity -- captured once at mount; component never re-renders with a different "now" requirement
+  const now = Date.now()
   const [checkIn, setCheckIn] = useState<CheckInDetail | null>(null)
   const [loading, setLoading] = useState(true)
   const [adminNotes, setAdminNotes] = useState('')
@@ -85,7 +87,7 @@ export default function CheckInReviewPage() {
   }
 
   const passportExpiry = new Date(checkIn.passport.expires_at)
-  const hoursLeft = (passportExpiry.getTime() - Date.now()) / (1000 * 60 * 60)
+  const hoursLeft = (passportExpiry.getTime() - now) / (1000 * 60 * 60)
   const isReviewed = checkIn.status !== 'pending'
 
   return (

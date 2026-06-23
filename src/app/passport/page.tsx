@@ -65,8 +65,10 @@ export default async function PassportPage({ searchParams }: Props) {
     redirect('/corridors')
   }
 
+  // eslint-disable-next-line react-hooks/purity -- server component async function, Date.now() evaluated once on the server
+  const now = Date.now()
   const isExpired = passport.status === 'expired' ||
-    (passport.status === 'active' && new Date(passport.expires_at).getTime() < Date.now())
+    (passport.status === 'active' && new Date(passport.expires_at).getTime() < now)
 
   const isComplete = passport.status === 'complete'
 
