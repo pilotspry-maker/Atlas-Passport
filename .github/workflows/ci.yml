@@ -32,6 +32,8 @@ jobs:
 
       # ── 3. Install ───────────────────────────────────────────────────────────
       - name: Install dependencies
+        # --legacy-peer-deps required: @react-email packages declare peer deps
+        # against React 18 but are compatible with React 19 at runtime.
         run: npm ci --legacy-peer-deps
 
       # ── 4. Lint ──────────────────────────────────────────────────────────────
