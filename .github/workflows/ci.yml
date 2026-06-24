@@ -301,8 +301,8 @@ jobs:
 
           # ── c) Sign in to get player JWTs and profile UUIDs ──────────────────
           print("Signing in as both players...")
-          p1_jwt, p1_id = sign_in("player_one_rls@test.atlasci.com", "TestPlayer1!RLS")
-          p2_jwt, p2_id = sign_in("player_two_rls@test.atlasci.com", "TestPlayer2!RLS")
+          p1_jwt, p1_id = sign_in("ci_player@test.local", "TestPassword123!")
+          p2_jwt, p2_id = sign_in("ci_admin@test.local", "TestPassword123!")
           print(f"  player_one id: {p1_id}")
           print(f"  player_two id: {p2_id}")
 
