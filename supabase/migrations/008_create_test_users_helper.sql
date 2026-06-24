@@ -56,7 +56,7 @@ BEGIN
 
   -- Return by UUID (not by email) to avoid stale-email lookup race
   RETURN QUERY
-    SELECT u.id, u.email FROM auth.users u
+    SELECT u.id, u.email::text FROM auth.users u
     WHERE u.id IN (
       'aaaaaaaa-0001-0000-0000-000000000000',
       'aaaaaaaa-0002-0000-0000-000000000000'
