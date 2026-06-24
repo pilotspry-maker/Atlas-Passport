@@ -2,119 +2,68 @@
 -- Migration 008 — create_test_users helper
 -- ════════════════════════════════════════════════════════════════════════════
 --
--- PURPOSE:
---   Add a SECURITY DEFINER function that inserts CI test users directly into
---   auth.users, bypassing GoTrue completely. This avoids:
---     • GoTrue email TLD validation  (rejects fake TLDs like .atlas)
---     • GoTrue email rate limits     (429 over_email_send_rate_limit)
---     • GoTrue confirmation emails   (not needed for headless CI)
+-- ROOT CAUSE FIX: Prior versions deleted stale rows WHERE email = '...' before
+-- inserting. Stale rows from prior runs may have the same fixed UUIDs but
+-- different emails — the email-based DELETE misses them, the INSERT hits a
+-- PRIMARY KEY conflict, ON CONFLICT DO NOTHING silences it, and the return
+-- SELECT WHERE email = '...' finds nothing. Both IDs returned NULL.
 --
--- Called by the CI seeder via:
---   POST /rest/v1/rpc/create_test_users  (anon key — SECURITY DEFINER runs as owner)
---
--- SAFE TO RUN MULTIPLE TIMES — uses ON CONFLICT DO NOTHING.
+-- FIX: Delete by UUID (not by email) and drop ON CONFLICT DO NOTHING so any
+-- remaining conflict surfaces as a real error rather than a silent skip.
 -- ════════════════════════════════════════════════════════════════════════════
 
--- ── create_test_users ────────────────────────────────────────────────────────
---
--- Inserts both CI test users into auth.users with:
---   • A hashed password (bcrypt via pgcrypto)
---   • email_confirmed_at / confirmed_at set to NOW() (pre-confirmed)
---   • user_metadata with full_name
---
--- Returns JSONB with the two user IDs so the seeder can use them for
--- passport/check-in upserts without a sign-in round trip.
--- However the seeder still signs in via GoTrue to get a real JWT for RLS
--- authenticated inserts — this function just ensures the users exist.
+DROP FUNCTION IF EXISTS public.create_test_users();
 
 CREATE OR REPLACE FUNCTION public.create_test_users()
-RETURNS JSONB
+RETURNS TABLE(user_id uuid, email text)
 LANGUAGE plpgsql
 SECURITY DEFINER
 SET search_path = auth, public, extensions
 AS $$
 DECLARE
-  p1_id  UUID;
-  p2_id  UUID;
-  now_ts TIMESTAMPTZ := NOW();
+  v_now timestamptz := now();
 BEGIN
-  -- ── Player One ─────────────────────────────────────────────────────────────
-  INSERT INTO auth.users (
-    id,
-    instance_id,
-    email,
-    encrypted_password,
-    email_confirmed_at,
-    confirmed_at,
-    raw_user_meta_data,
-    raw_app_meta_data,
-    created_at,
-    updated_at,
-    role,
-    aud
-  )
-  VALUES (
-    gen_random_uuid(),
-    '00000000-0000-0000-0000-000000000000'::UUID,
-    'player_one_rls@test.atlasci.com',
-    crypt('TestPlayer1!RLS', gen_salt('bf')),
-    now_ts,
-    now_ts,
-    '{"full_name": "CI Player One"}'::JSONB,
-    '{"provider": "email", "providers": ["email"]}'::JSONB,
-    now_ts,
-    now_ts,
-    'authenticated',
-    'authenticated'
-  )
-  ON CONFLICT (email) DO NOTHING;
-
-  -- ── Player Two ─────────────────────────────────────────────────────────────
-  INSERT INTO auth.users (
-    id,
-    instance_id,
-    email,
-    encrypted_password,
-    email_confirmed_at,
-    confirmed_at,
-    raw_user_meta_data,
-    raw_app_meta_data,
-    created_at,
-    updated_at,
-    role,
-    aud
-  )
-  VALUES (
-    gen_random_uuid(),
-    '00000000-0000-0000-0000-000000000000'::UUID,
-    'player_two_rls@test.atlasci.com',
-    crypt('TestPlayer2!RLS', gen_salt('bf')),
-    now_ts,
-    now_ts,
-    '{"full_name": "CI Player Two"}'::JSONB,
-    '{"provider": "email", "providers": ["email"]}'::JSONB,
-    now_ts,
-    now_ts,
-    'authenticated',
-    'authenticated'
-  )
-  ON CONFLICT (email) DO NOTHING;
-
-  -- Fetch the IDs (works whether they were just created or already existed)
-  SELECT id INTO p1_id FROM auth.users WHERE email = 'player_one_rls@test.atlasci.com';
-  SELECT id INTO p2_id FROM auth.users WHERE email = 'player_two_rls@test.atlasci.com';
-
-  RETURN jsonb_build_object(
-    'player_one_id', p1_id,
-    'player_two_id', p2_id,
-    'status', 'ok'
+  -- Delete by UUID (not by email) — removes stale rows regardless of email
+  DELETE FROM auth.users
+  WHERE id IN (
+    'aaaaaaaa-0001-0000-0000-000000000000'::uuid,
+    'aaaaaaaa-0002-0000-0000-000000000000'::uuid
   );
+
+  INSERT INTO auth.users (
+    id, instance_id, aud, role, email,
+    encrypted_password, email_confirmed_at,
+    raw_app_meta_data, raw_user_meta_data,
+    created_at, updated_at, is_super_admin, is_sso_user, deleted_at
+  ) VALUES
+  (
+    'aaaaaaaa-0001-0000-0000-000000000000',
+    '00000000-0000-0000-0000-000000000000',
+    'authenticated', 'authenticated', 'ci_player@test.local',
+    crypt('TestPassword123!', gen_salt('bf')), v_now,
+    '{"provider":"email","providers":["email"]}'::jsonb, '{}'::jsonb,
+    v_now, v_now, false, false, NULL
+  ),
+  (
+    'aaaaaaaa-0002-0000-0000-000000000000',
+    '00000000-0000-0000-0000-000000000000',
+    'authenticated', 'authenticated', 'ci_admin@test.local',
+    crypt('TestPassword123!', gen_salt('bf')), v_now,
+    '{"provider":"email","providers":["email"]}'::jsonb,
+    '{"is_admin":true}'::jsonb,
+    v_now, v_now, false, false, NULL
+  );
+
+  -- Return by UUID (not by email) to avoid stale-email lookup race
+  RETURN QUERY
+    SELECT u.id, u.email FROM auth.users u
+    WHERE u.id IN (
+      'aaaaaaaa-0001-0000-0000-000000000000',
+      'aaaaaaaa-0002-0000-0000-000000000000'
+    );
 END;
 $$;
 
--- Grant execute to the anon role so the CI seeder can call it without a JWT.
--- The function is safe to call publicly — it only creates the two known
--- allow-listed test users with deterministic passwords.
 GRANT EXECUTE ON FUNCTION public.create_test_users() TO anon;
 GRANT EXECUTE ON FUNCTION public.create_test_users() TO authenticated;
 
@@ -131,15 +80,3 @@ BEGIN
   RAISE NOTICE '[008] create_test_users: present. ✓';
 END;
 $$;
-
--- ════════════════════════════════════════════════════════════════════════════
--- USAGE (from CI seeder, replacing GoTrue signUp calls):
---
---   curl -s "https://gaavynmmysdhovpatzlp.supabase.co/rest/v1/rpc/create_test_users" \
---        -H "apikey: <anon_key>" \
---        -H "Content-Type: application/json" \
---        -d '{}'
---
--- Returns:
---   {"player_one_id": "<uuid>", "player_two_id": "<uuid>", "status": "ok"}
--- ════════════════════════════════════════════════════════════════════════════
