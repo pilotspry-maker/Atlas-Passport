@@ -142,13 +142,17 @@ jobs:
               ok = r.status_code in (200, 201, 204, 409)
               print(f"  authed_upsert {table}: {'ok' if ok else f'WARN {r.status_code} {r.text}'}")
 
-          # ── Step 1: Create users via migration 008 ──────────────────────────
-          # FIX (2026-06-23): removed signUp fallback — it caused 429
-          # over_email_send_rate_limit on every CI run. create_test_users
-          # (migration 008) inserts directly into auth.users with no email sent.
-          # If this RPC fails, migrations are not applied and CI should fail loudly.
-          print("\n── Step 1: create users (DB → no GoTrue, no email) ───────────")
-          rpc("create_test_users")
+          # ── Step 1: Create regression users via migration 009 ──────────────
+          # FIX (2026-06-24): the regression suite uses the reg_player_one /
+          # reg_player_two namespace — these users do NOT exist in migration
+          # 008's create_test_users (which only seeds player_one_rls /
+          # player_two_rls for the exploit suite). Migration 009 adds the
+          # create_regression_users RPC, which inserts the two regression
+          # users directly into auth.users via SECURITY DEFINER (no GoTrue,
+          # no email, no rate limit). If this RPC fails, migrations are not
+          # applied and CI should fail loudly.
+          print("\n── Step 1: create regression users (DB → no GoTrue, no email) ─")
+          rpc("create_regression_users")
           time.sleep(1)  # let profiles trigger materialise
 
           # ── Step 2: Seed corridors, node, reward via service role ──────────────
