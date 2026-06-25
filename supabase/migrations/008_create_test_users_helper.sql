@@ -37,8 +37,11 @@ DECLARE
   v_now timestamptz := now();
 BEGIN
   -- Delete identities first (FK order), then users.
-  DELETE FROM auth.identities
-  WHERE user_id IN (
+  -- Table alias required: RETURNS TABLE(user_id uuid,...) creates a PL/pgSQL
+  -- output variable named user_id; without the alias, WHERE user_id IN (...)
+  -- is ambiguous between the variable and the column (error 42702).
+  DELETE FROM auth.identities AS ai
+  WHERE ai.user_id IN (
     'aaaaaaaa-0001-0000-0000-000000000000'::uuid,
     'aaaaaaaa-0002-0000-0000-000000000000'::uuid
   );
