@@ -58,7 +58,6 @@ BEGIN
   UPDATE auth.users
   SET
     email_confirmed_at = COALESCE(email_confirmed_at, NOW()),
-    confirmed_at       = COALESCE(confirmed_at,       NOW()),
     updated_at         = NOW()
   WHERE email = user_email;
 
