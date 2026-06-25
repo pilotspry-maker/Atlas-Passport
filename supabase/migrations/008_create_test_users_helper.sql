@@ -9,7 +9,7 @@
 --
 -- Design invariants:
 --   - Fixed UUIDs so DELETE-by-UUID is reliable across runs
---   - DELETE auth.users by UUID first; CASCADE removes auth.identities automatically
+--   - DELETE auth.identities by user_id first (FK order), then DELETE auth.users
 --   - INSERT both auth.users AND auth.identities
 --     GoTrue v2 requires an auth.identities row (provider='email') for every
 --     user that signs in with email/password.  Direct auth.users INSERT without
@@ -19,7 +19,8 @@
 --   - No ON CONFLICT clause — surfaces real conflicts as hard errors
 --   - No confirmed_at write (GoTrue v2 GENERATED ALWAYS column — cannot be set)
 --   - auth.identities.email is also GENERATED ALWAYS — not included in INSERT
---   - SET search_path includes extensions so crypt/gen_salt/gen_random_uuid resolve
+--   - SET search_path includes extensions so crypt/gen_salt resolve
+--   - auth.identities.id = user UUID as text; provider_id = same UUID text
 -- ════════════════════════════════════════════════════════════════════════════
 
 -- ── 1. create_test_users ─────────────────────────────────────────────────────
@@ -35,8 +36,13 @@ AS $$
 DECLARE
   v_now timestamptz := now();
 BEGIN
-  -- Delete by UUID (not by email) — removes stale rows regardless of email.
-  -- ON DELETE CASCADE on auth.identities.user_id clears identities automatically.
+  -- Delete identities first (FK order), then users.
+  DELETE FROM auth.identities
+  WHERE user_id IN (
+    'aaaaaaaa-0001-0000-0000-000000000000'::uuid,
+    'aaaaaaaa-0002-0000-0000-000000000000'::uuid
+  );
+
   DELETE FROM auth.users
   WHERE id IN (
     'aaaaaaaa-0001-0000-0000-000000000000'::uuid,
@@ -68,33 +74,42 @@ BEGIN
   );
 
   -- GoTrue v2 requires an auth.identities row for email/password sign-in.
-  -- provider_id = email (GoTrue convention for 'email' provider).
-  -- Do NOT include the `email` column — it is GENERATED ALWAYS.
+  -- id = user UUID as text; provider_id = same UUID text (GoTrue v2 convention).
+  -- DO NOT include `email` column — it is GENERATED ALWAYS AS
+  -- (lower(identity_data->>'email')) STORED.
   INSERT INTO auth.identities (
-    id, provider_id, user_id, identity_data, provider,
-    last_sign_in_at, created_at, updated_at
+    id,
+    user_id,
+    provider_id,
+    identity_data,
+    provider,
+    last_sign_in_at,
+    created_at,
+    updated_at
   ) VALUES
   (
-    gen_random_uuid(),
-    'ci_player@test.local',
+    'aaaaaaaa-0001-0000-0000-000000000000',
     'aaaaaaaa-0001-0000-0000-000000000000'::uuid,
-    jsonb_build_object(
-      'sub',   'aaaaaaaa-0001-0000-0000-000000000000',
-      'email', 'ci_player@test.local'
-    ),
+    'aaaaaaaa-0001-0000-0000-000000000000',
+    format('{"sub":"%s","email":"%s"}',
+      'aaaaaaaa-0001-0000-0000-000000000000',
+      'ci_player@test.local')::jsonb,
     'email',
-    v_now, v_now, v_now
+    v_now,
+    v_now,
+    v_now
   ),
   (
-    gen_random_uuid(),
-    'ci_admin@test.local',
+    'aaaaaaaa-0002-0000-0000-000000000000',
     'aaaaaaaa-0002-0000-0000-000000000000'::uuid,
-    jsonb_build_object(
-      'sub',   'aaaaaaaa-0002-0000-0000-000000000000',
-      'email', 'ci_admin@test.local'
-    ),
+    'aaaaaaaa-0002-0000-0000-000000000000',
+    format('{"sub":"%s","email":"%s"}',
+      'aaaaaaaa-0002-0000-0000-000000000000',
+      'ci_admin@test.local')::jsonb,
     'email',
-    v_now, v_now, v_now
+    v_now,
+    v_now,
+    v_now
   );
 
   -- Return by UUID (not by email) to avoid stale-email lookup race
@@ -137,7 +152,13 @@ AS $$
 DECLARE
   v_now TIMESTAMPTZ := now();
 BEGIN
-  -- Delete by UUID — CASCADE removes auth.identities automatically.
+  -- Delete identities first (FK order), then users.
+  DELETE FROM auth.identities
+  WHERE user_id IN (
+    'bbbbbbbb-0001-0000-0000-000000000000'::uuid,
+    'bbbbbbbb-0002-0000-0000-000000000000'::uuid
+  );
+
   DELETE FROM auth.users
   WHERE id IN (
     'bbbbbbbb-0001-0000-0000-000000000000'::uuid,
@@ -170,32 +191,42 @@ BEGIN
   );
 
   -- GoTrue v2 requires auth.identities for email/password sign-in.
-  -- Do NOT include the `email` column — it is GENERATED ALWAYS.
+  -- id = user UUID as text; provider_id = same UUID text.
+  -- DO NOT include `email` column — it is GENERATED ALWAYS AS
+  -- (lower(identity_data->>'email')) STORED.
   INSERT INTO auth.identities (
-    id, provider_id, user_id, identity_data, provider,
-    last_sign_in_at, created_at, updated_at
+    id,
+    user_id,
+    provider_id,
+    identity_data,
+    provider,
+    last_sign_in_at,
+    created_at,
+    updated_at
   ) VALUES
   (
-    gen_random_uuid(),
-    'reg_player_one@test.atlasci.com',
+    'bbbbbbbb-0001-0000-0000-000000000000',
     'bbbbbbbb-0001-0000-0000-000000000000'::uuid,
-    jsonb_build_object(
-      'sub',   'bbbbbbbb-0001-0000-0000-000000000000',
-      'email', 'reg_player_one@test.atlasci.com'
-    ),
+    'bbbbbbbb-0001-0000-0000-000000000000',
+    format('{"sub":"%s","email":"%s"}',
+      'bbbbbbbb-0001-0000-0000-000000000000',
+      'reg_player_one@test.atlasci.com')::jsonb,
     'email',
-    v_now, v_now, v_now
+    v_now,
+    v_now,
+    v_now
   ),
   (
-    gen_random_uuid(),
-    'reg_player_two@test.atlasci.com',
+    'bbbbbbbb-0002-0000-0000-000000000000',
     'bbbbbbbb-0002-0000-0000-000000000000'::uuid,
-    jsonb_build_object(
-      'sub',   'bbbbbbbb-0002-0000-0000-000000000000',
-      'email', 'reg_player_two@test.atlasci.com'
-    ),
+    'bbbbbbbb-0002-0000-0000-000000000000',
+    format('{"sub":"%s","email":"%s"}',
+      'bbbbbbbb-0002-0000-0000-000000000000',
+      'reg_player_two@test.atlasci.com')::jsonb,
     'email',
-    v_now, v_now, v_now
+    v_now,
+    v_now,
+    v_now
   );
 
   RETURN jsonb_build_object(
