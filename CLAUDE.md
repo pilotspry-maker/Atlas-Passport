@@ -105,11 +105,14 @@ Apply in order via Supabase SQL Editor or CLI. All migrations are idempotent.
 | 003 | `003_profile_referral_code.sql` | `profiles.referral_code` | ✅ applied |
 | 004 | `004_repair_migration.sql` | Schema repair — `rewards.name`, `rewards.claimed`, storage policies | ⏳ **PENDING** |
 | 005 | `005_rls_exploit_patches.sql` | `profiles_update_own` is_admin freeze; `check_ins_insert_own` ownership guard | ⏳ **PENDING** |
-| 006 | `006_test_helpers.sql` | `confirm_test_users`, `seed_ci_fixtures`, `seed_ci_fixtures_v2` RPCs | ⏳ **PENDING** |
+| 006 | `006_test_helpers.sql` | `confirm_test_users`, `seed_ci_fixtures`, `seed_ci_fixtures_v2` RPCs | ✅ applied (CI confirmed) |
 | 007 | `007_rls_column_guards.sql` | `passports_insert_own` corridor guard; `check_ins_player_view` SECURITY BARRIER | ⏳ **PENDING** |
-| 008 | `008_create_test_users_helper.sql` | `create_test_users()` — direct `auth.users` injection for CI | ⏳ **PENDING** |
-
-A combined paste-ready file exists at `migrations_004_through_008_combined.sql` (1,198 lines) for one-shot application.
+| 008 | `008_create_test_users_helper.sql` | `create_test_users()` — original CI helper (superseded by 011–013) | ✅ applied (CI confirmed) |
+| 009 | `009_create_regression_users.sql` | `create_regression_users()` — regression suite users | ⏳ **PENDING** |
+| 010 | `010_fix_null_token_columns.sql` | COALESCE patch for null token columns in existing users | ⏳ **PENDING** |
+| 011 | `011_refresh_ci_user_functions.sql` | Refresh both CI user helpers + auth.identities row for GoTrue v2 | ✅ applied |
+| 012 | `012_add_email_change_to_ci_users.sql` | Add `email_change=''` and `phone=''` to CI user INSERT | ✅ applied |
+| 013 | `013_add_phone_change_to_ci_users.sql` | Add `phone_change=''` to CI user INSERT (GoTrue PhoneChange fix) | ⏳ **PENDING — apply next** |
 
 **Sentinel checks** to verify post-apply:
 - `POST /rpc/create_test_users` → 200
