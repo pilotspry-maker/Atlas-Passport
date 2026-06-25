@@ -4,15 +4,22 @@
 --
 -- Contains two SECURITY DEFINER helper functions called by CI workflows:
 --
---   create_test_users      — seeds exploit-suite users (ci_player / ci_admin)
+--   create_test_users       — seeds exploit-suite users (ci_player / ci_admin)
 --   create_regression_users — seeds regression-suite users (reg_player_one/two)
 --
--- Design invariants for both functions:
+-- Design invariants:
 --   - Fixed UUIDs so DELETE-by-UUID is reliable across runs
---   - DELETE by UUID before INSERT (not by email) to clear stale rows
+--   - DELETE auth.users by UUID first; CASCADE removes auth.identities automatically
+--   - INSERT both auth.users AND auth.identities
+--     GoTrue v2 requires an auth.identities row (provider='email') for every
+--     user that signs in with email/password.  Direct auth.users INSERT without
+--     a corresponding auth.identities row causes GoTrue to return:
+--       500 "Database error querying schema"
+--     on every sign-in attempt for that user.
 --   - No ON CONFLICT clause — surfaces real conflicts as hard errors
---   - No confirmed_at (GoTrue v2 generated column — cannot be set)
---   - SET search_path includes extensions so crypt/gen_salt resolve
+--   - No confirmed_at write (GoTrue v2 GENERATED ALWAYS column — cannot be set)
+--   - auth.identities.email is also GENERATED ALWAYS — not included in INSERT
+--   - SET search_path includes extensions so crypt/gen_salt/gen_random_uuid resolve
 -- ════════════════════════════════════════════════════════════════════════════
 
 -- ── 1. create_test_users ─────────────────────────────────────────────────────
@@ -28,7 +35,8 @@ AS $$
 DECLARE
   v_now timestamptz := now();
 BEGIN
-  -- Delete by UUID (not by email) — removes stale rows regardless of email
+  -- Delete by UUID (not by email) — removes stale rows regardless of email.
+  -- ON DELETE CASCADE on auth.identities.user_id clears identities automatically.
   DELETE FROM auth.users
   WHERE id IN (
     'aaaaaaaa-0001-0000-0000-000000000000'::uuid,
@@ -57,6 +65,36 @@ BEGIN
     '{"provider":"email","providers":["email"]}'::jsonb,
     '{"is_admin":true}'::jsonb,
     v_now, v_now, false, false, NULL
+  );
+
+  -- GoTrue v2 requires an auth.identities row for email/password sign-in.
+  -- provider_id = email (GoTrue convention for 'email' provider).
+  -- Do NOT include the `email` column — it is GENERATED ALWAYS.
+  INSERT INTO auth.identities (
+    id, provider_id, user_id, identity_data, provider,
+    last_sign_in_at, created_at, updated_at
+  ) VALUES
+  (
+    gen_random_uuid(),
+    'ci_player@test.local',
+    'aaaaaaaa-0001-0000-0000-000000000000'::uuid,
+    jsonb_build_object(
+      'sub',   'aaaaaaaa-0001-0000-0000-000000000000',
+      'email', 'ci_player@test.local'
+    ),
+    'email',
+    v_now, v_now, v_now
+  ),
+  (
+    gen_random_uuid(),
+    'ci_admin@test.local',
+    'aaaaaaaa-0002-0000-0000-000000000000'::uuid,
+    jsonb_build_object(
+      'sub',   'aaaaaaaa-0002-0000-0000-000000000000',
+      'email', 'ci_admin@test.local'
+    ),
+    'email',
+    v_now, v_now, v_now
   );
 
   -- Return by UUID (not by email) to avoid stale-email lookup race
@@ -99,7 +137,7 @@ AS $$
 DECLARE
   v_now TIMESTAMPTZ := now();
 BEGIN
-  -- Delete by UUID (not by email) — removes stale rows regardless of email
+  -- Delete by UUID — CASCADE removes auth.identities automatically.
   DELETE FROM auth.users
   WHERE id IN (
     'bbbbbbbb-0001-0000-0000-000000000000'::uuid,
@@ -129,6 +167,35 @@ BEGIN
     '{"provider":"email","providers":["email"]}'::jsonb,
     '{"full_name":"CI Regression Player Two"}'::jsonb,
     v_now, v_now, false, false, NULL
+  );
+
+  -- GoTrue v2 requires auth.identities for email/password sign-in.
+  -- Do NOT include the `email` column — it is GENERATED ALWAYS.
+  INSERT INTO auth.identities (
+    id, provider_id, user_id, identity_data, provider,
+    last_sign_in_at, created_at, updated_at
+  ) VALUES
+  (
+    gen_random_uuid(),
+    'reg_player_one@test.atlasci.com',
+    'bbbbbbbb-0001-0000-0000-000000000000'::uuid,
+    jsonb_build_object(
+      'sub',   'bbbbbbbb-0001-0000-0000-000000000000',
+      'email', 'reg_player_one@test.atlasci.com'
+    ),
+    'email',
+    v_now, v_now, v_now
+  ),
+  (
+    gen_random_uuid(),
+    'reg_player_two@test.atlasci.com',
+    'bbbbbbbb-0002-0000-0000-000000000000'::uuid,
+    jsonb_build_object(
+      'sub',   'bbbbbbbb-0002-0000-0000-000000000000',
+      'email', 'reg_player_two@test.atlasci.com'
+    ),
+    'email',
+    v_now, v_now, v_now
   );
 
   RETURN jsonb_build_object(
