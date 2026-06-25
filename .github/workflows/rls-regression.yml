@@ -180,8 +180,8 @@ jobs:
           })
           svc_upsert("rewards", {
               "id": REWARD_ID, "corridor_id": CORRIDOR_ACTIVE_ID,
-              "name": "Regression Reward", "description": "Regression test reward",
-              "redemption_code": "REG-TEST-001", "claimed": False
+              "title": "Regression Reward", "description": "Regression test reward",
+              "redemption_code": "REG-TEST-001"
           })
 
           # ── Step 3: Seed passports + check-in ─────────────────────────────────

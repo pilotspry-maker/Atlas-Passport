@@ -1,17 +1,18 @@
 -- ════════════════════════════════════════════════════════════════════════════
--- Migration 009 — create_regression_users helper
+-- Migration 009 — create_regression_users helper (superseded by 008)
 -- ════════════════════════════════════════════════════════════════════════════
 --
--- Mirrors migration 008 (create_test_users) but seeds the RLS regression
--- suite users (reg_player_one / reg_player_two) so the regression suite
--- does not collide with the exploit suite's fixtures.
+-- IMPORTANT: migration 008 already contains create_regression_users with the
+-- correct auth.identities INSERT.  This file re-applies the same function
+-- body so that if 009 runs after 008 (alphabetical order), the production DB
+-- ends up with the correct version rather than the old one without identities.
 --
--- Same design principles as 008:
---   - Fixed UUIDs so DELETE-by-UUID is reliable across runs
---   - DELETE by UUID before INSERT (not by email) to clear stale rows
---   - No ON CONFLICT clause — surfaces real conflicts as hard errors
---   - No confirmed_at (GoTrue v2 generated column — cannot be set)
---   - SET search_path includes extensions so crypt/gen_salt resolve
+-- Design invariants (same as 008):
+--   - DELETE auth.identities first (FK order), then DELETE auth.users
+--   - INSERT both auth.users AND auth.identities
+--   - auth.identities.id = user UUID as text; provider_id = same UUID text
+--   - No confirmed_at write; auth.identities.email is GENERATED ALWAYS
+--   - No ON CONFLICT — surfaces real conflicts as hard errors
 -- ════════════════════════════════════════════════════════════════════════════
 
 DROP FUNCTION IF EXISTS public.create_regression_users();
@@ -25,7 +26,13 @@ AS $$
 DECLARE
   v_now TIMESTAMPTZ := now();
 BEGIN
-  -- Delete by UUID (not by email) — removes stale rows regardless of email
+  -- Delete identities first (FK order), then users.
+  DELETE FROM auth.identities
+  WHERE user_id IN (
+    'bbbbbbbb-0001-0000-0000-000000000000'::uuid,
+    'bbbbbbbb-0002-0000-0000-000000000000'::uuid
+  );
+
   DELETE FROM auth.users
   WHERE id IN (
     'bbbbbbbb-0001-0000-0000-000000000000'::uuid,
@@ -55,6 +62,32 @@ BEGIN
     '{"provider":"email","providers":["email"]}'::jsonb,
     '{"full_name":"CI Regression Player Two"}'::jsonb,
     v_now, v_now, false, false, NULL
+  );
+
+  -- GoTrue v2 requires auth.identities for email/password sign-in.
+  -- id = user UUID as text; provider_id = same UUID text.
+  -- DO NOT include `email` column — GENERATED ALWAYS AS (lower(identity_data->>'email')).
+  INSERT INTO auth.identities (
+    id, user_id, provider_id, identity_data, provider,
+    last_sign_in_at, created_at, updated_at
+  ) VALUES
+  (
+    'bbbbbbbb-0001-0000-0000-000000000000',
+    'bbbbbbbb-0001-0000-0000-000000000000'::uuid,
+    'bbbbbbbb-0001-0000-0000-000000000000',
+    format('{"sub":"%s","email":"%s"}',
+      'bbbbbbbb-0001-0000-0000-000000000000',
+      'reg_player_one@test.atlasci.com')::jsonb,
+    'email', v_now, v_now, v_now
+  ),
+  (
+    'bbbbbbbb-0002-0000-0000-000000000000',
+    'bbbbbbbb-0002-0000-0000-000000000000'::uuid,
+    'bbbbbbbb-0002-0000-0000-000000000000',
+    format('{"sub":"%s","email":"%s"}',
+      'bbbbbbbb-0002-0000-0000-000000000000',
+      'reg_player_two@test.atlasci.com')::jsonb,
+    'email', v_now, v_now, v_now
   );
 
   RETURN jsonb_build_object(
