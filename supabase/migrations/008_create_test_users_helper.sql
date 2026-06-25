@@ -56,7 +56,9 @@ BEGIN
     id, instance_id, aud, role, email,
     encrypted_password, email_confirmed_at,
     raw_app_meta_data, raw_user_meta_data,
-    created_at, updated_at, is_super_admin, is_sso_user, deleted_at
+    created_at, updated_at, is_super_admin, is_sso_user, deleted_at,
+    confirmation_token, recovery_token, email_change_token_new,
+    email_change_token_current, reauthentication_token, phone_change_token
   ) VALUES
   (
     'aaaaaaaa-0001-0000-0000-000000000000',
@@ -64,7 +66,8 @@ BEGIN
     'authenticated', 'authenticated', 'ci_player@test.local',
     crypt('TestPassword123!', gen_salt('bf')), v_now,
     '{"provider":"email","providers":["email"]}'::jsonb, '{}'::jsonb,
-    v_now, v_now, false, false, NULL
+    v_now, v_now, false, false, NULL,
+    '', '', '', '', '', ''
   ),
   (
     'aaaaaaaa-0002-0000-0000-000000000000',
@@ -73,7 +76,8 @@ BEGIN
     crypt('TestPassword123!', gen_salt('bf')), v_now,
     '{"provider":"email","providers":["email"]}'::jsonb,
     '{"is_admin":true}'::jsonb,
-    v_now, v_now, false, false, NULL
+    v_now, v_now, false, false, NULL,
+    '', '', '', '', '', ''
   );
 
   -- GoTrue v2 requires an auth.identities row for email/password sign-in.
@@ -172,7 +176,9 @@ BEGIN
     id, instance_id, aud, role, email,
     encrypted_password, email_confirmed_at,
     raw_app_meta_data, raw_user_meta_data,
-    created_at, updated_at, is_super_admin, is_sso_user, deleted_at
+    created_at, updated_at, is_super_admin, is_sso_user, deleted_at,
+    confirmation_token, recovery_token, email_change_token_new,
+    email_change_token_current, reauthentication_token, phone_change_token
   ) VALUES
   (
     'bbbbbbbb-0001-0000-0000-000000000000',
@@ -181,7 +187,8 @@ BEGIN
     crypt('RegPlayer1!RLS', gen_salt('bf')), v_now,
     '{"provider":"email","providers":["email"]}'::jsonb,
     '{"full_name":"CI Regression Player One"}'::jsonb,
-    v_now, v_now, false, false, NULL
+    v_now, v_now, false, false, NULL,
+    '', '', '', '', '', ''
   ),
   (
     'bbbbbbbb-0002-0000-0000-000000000000',
@@ -190,7 +197,8 @@ BEGIN
     crypt('RegPlayer2!RLS', gen_salt('bf')), v_now,
     '{"provider":"email","providers":["email"]}'::jsonb,
     '{"full_name":"CI Regression Player Two"}'::jsonb,
-    v_now, v_now, false, false, NULL
+    v_now, v_now, false, false, NULL,
+    '', '', '', '', '', ''
   );
 
   -- GoTrue v2 requires auth.identities for email/password sign-in.
