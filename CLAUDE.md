@@ -112,7 +112,8 @@ Apply in order via Supabase SQL Editor or CLI. All migrations are idempotent.
 | 010 | `010_fix_null_token_columns.sql` | COALESCE patch for null token columns in existing users | ⏳ **PENDING** |
 | 011 | `011_refresh_ci_user_functions.sql` | Refresh both CI user helpers + auth.identities row for GoTrue v2 | ✅ applied |
 | 012 | `012_add_email_change_to_ci_users.sql` | Add `email_change=''` and `phone=''` to CI user INSERT | ✅ applied |
-| 013 | `013_add_phone_change_to_ci_users.sql` | Add `phone_change=''` to CI user INSERT (GoTrue PhoneChange fix) | ⏳ **PENDING — apply next** |
+| 013 | `013_add_phone_change_to_ci_users.sql` | Add `phone_change=''` to CI user INSERT (GoTrue PhoneChange fix) | ⏳ **PENDING** |
+| 014 | `014_comprehensive_null_fix_ci_users.sql` | Dynamic loop fixes ALL nullable text columns — supersedes 011–013 NULL guessing | ⏳ **PENDING — apply next** |
 
 **Sentinel checks** to verify post-apply:
 - `POST /rpc/create_test_users` → 200
