@@ -9,7 +9,7 @@
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
-    "lint": "next lint",
+    "lint": "eslint src",
     "email": "email dev --dir emails --port 3001",
     "test:rls-exploits": "vitest run --config vitest.rls.config.ts",
     "test:rls-exploits:watch": "vitest --config vitest.rls.config.ts",
