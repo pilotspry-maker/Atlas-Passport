@@ -100,14 +100,15 @@ jobs:
                     "Content-Type": "application/json"}
 
           # Regression-specific fixture UUIDs — isolated from exploit suite
-          CORRIDOR_ACTIVE_ID   = "rrrrrrr1-0000-0000-0000-000000000001"
-          CORRIDOR_INACTIVE_ID = "rrrrrrr1-0000-0000-0000-000000000002"
-          NODE_ID              = "rrrrrrr2-0000-0000-0000-000000000001"
-          REWARD_ID            = "rrrrrrr5-0000-0000-0000-000000000001"
-          PASSPORT_ACTIVE_ID   = "rrrrrrr3-0000-0000-0000-000000000001"
-          PASSPORT_COMPLETE_ID = "rrrrrrr3-0000-0000-0000-000000000002"
-          PASSPORT_OTHER_ID    = "rrrrrrr3-0000-0000-0000-000000000003"
-          CHECKIN_SEED_ID      = "rrrrrrr4-0000-0000-0000-000000000001"
+          # Must be valid hex UUIDs (no non-hex chars like 'r')
+          CORRIDOR_ACTIVE_ID   = "cccc0001-0000-0000-0000-000000000001"
+          CORRIDOR_INACTIVE_ID = "cccc0001-0000-0000-0000-000000000002"
+          NODE_ID              = "cccc0002-0000-0000-0000-000000000001"
+          REWARD_ID            = "cccc0005-0000-0000-0000-000000000001"
+          PASSPORT_ACTIVE_ID   = "cccc0003-0000-0000-0000-000000000001"
+          PASSPORT_COMPLETE_ID = "cccc0003-0000-0000-0000-000000000002"
+          PASSPORT_OTHER_ID    = "cccc0003-0000-0000-0000-000000000003"
+          CHECKIN_SEED_ID      = "cccc0004-0000-0000-0000-000000000001"
 
           PLAYER_ONE = ("reg_player_one@test.atlasci.com", "RegPlayer1!RLS")
           PLAYER_TWO = ("reg_player_two@test.atlasci.com", "RegPlayer2!RLS")
@@ -157,25 +158,19 @@ jobs:
 
           # ── Step 2: Seed corridors, node, reward via service role ──────────────
           print("\n── Step 2: seed corridors, node, reward ──────────────────────")
-          import datetime
-          now = datetime.datetime.utcnow().isoformat() + "Z"
-          future = (datetime.datetime.utcnow() + datetime.timedelta(days=90)).isoformat() + "Z"
-          past = (datetime.datetime.utcnow() - datetime.timedelta(days=2)).isoformat() + "Z"
-          yesterday = (datetime.datetime.utcnow() - datetime.timedelta(days=1)).isoformat() + "Z"
-
           svc_upsert("corridors", {
               "id": CORRIDOR_ACTIVE_ID, "name": "Regression Corridor Active",
-              "description": "Regression test", "is_active": True,
-              "start_date": now, "end_date": future
+              "description": "Regression test", "city": "Test City",
+              "is_active": True
           })
           svc_upsert("corridors", {
               "id": CORRIDOR_INACTIVE_ID, "name": "Regression Corridor Inactive",
-              "description": "Inactive regression test", "is_active": False,
-              "start_date": past, "end_date": yesterday
+              "description": "Inactive regression test", "city": "Test City",
+              "is_active": False
           })
           svc_upsert("nodes", {
               "id": NODE_ID, "corridor_id": CORRIDOR_ACTIVE_ID,
-              "name": "Regression Node", "location_name": "Test Location",
+              "name": "Regression Node", "sequence": 1,
               "latitude": 38.9, "longitude": -77.0, "is_active": True
           })
           svc_upsert("rewards", {
