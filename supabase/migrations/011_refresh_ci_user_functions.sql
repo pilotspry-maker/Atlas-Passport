@@ -1,29 +1,24 @@
 -- ════════════════════════════════════════════════════════════════════════════
--- Migration 008 — create_test_users + create_regression_users helpers
+-- Migration 011 — refresh CI user helper functions (force production update)
 -- ════════════════════════════════════════════════════════════════════════════
 --
--- Contains two SECURITY DEFINER helper functions called by CI workflows:
+-- WHY THIS EXISTS:
+--   Migrations 008 and 009 were first applied to the production database before
+--   the token-column and auth.identities fixes landed. Because Supabase runs
+--   each numbered migration exactly once, editing 008/009 on disk does not
+--   update the stored functions in production.
 --
---   create_test_users       — seeds exploit-suite users (ci_player / ci_admin)
---   create_regression_users — seeds regression-suite users (reg_player_one/two)
---
--- Design invariants:
---   - Fixed UUIDs so DELETE-by-UUID is reliable across runs
---   - DELETE auth.identities by user_id first (FK order), then DELETE auth.users
---   - INSERT both auth.users AND auth.identities
---     GoTrue v2 requires an auth.identities row (provider='email') for every
---     user that signs in with email/password.  Direct auth.users INSERT without
---     a corresponding auth.identities row causes GoTrue to return:
---       500 "Database error querying schema"
---     on every sign-in attempt for that user.
---   - No ON CONFLICT clause — surfaces real conflicts as hard errors
---   - No confirmed_at write (GoTrue v2 GENERATED ALWAYS column — cannot be set)
---   - auth.identities.email is also GENERATED ALWAYS — not included in INSERT
---   - SET search_path includes extensions so crypt/gen_salt resolve
---   - auth.identities.id = user UUID as text; provider_id = same UUID text
+--   This migration forces CREATE OR REPLACE FUNCTION for both helpers with the
+--   definitive correct body so the production database picks up all fixes in
+--   one idempotent run:
+--     • All 6 token columns explicitly set to '' in every INSERT INTO auth.users
+--     • Defensive COALESCE UPDATE immediately after INSERT (GoTrue v2 safety)
+--     • auth.identities rows inserted for GoTrue email/password sign-in
+--     • DELETE identities before DELETE users (FK order)
+--     • SECURITY DEFINER + search_path includes extensions (crypt/gen_salt)
 -- ════════════════════════════════════════════════════════════════════════════
 
--- ── 1. create_test_users ─────────────────────────────────────────────────────
+-- ── 1. create_test_users (exploit-suite: ci_player / ci_admin) ──────────────
 
 DROP FUNCTION IF EXISTS public.create_test_users();
 
@@ -80,8 +75,8 @@ BEGIN
     '', '', '', '', '', ''
   );
 
-  -- Defensive NULL-token patch: GoTrue v2 panics on NULL token columns.
-  -- The INSERT above already sets '' but this guards against schema defaults.
+  -- Defensive NULL-token patch: GoTrue v2 scans these into non-nullable Go
+  -- strings; NULL causes 500 "Database error querying schema" on every sign-in.
   UPDATE auth.users SET
     confirmation_token         = COALESCE(confirmation_token, ''),
     recovery_token             = COALESCE(recovery_token, ''),
@@ -96,17 +91,10 @@ BEGIN
 
   -- GoTrue v2 requires an auth.identities row for email/password sign-in.
   -- id = user UUID as text; provider_id = same UUID text (GoTrue v2 convention).
-  -- DO NOT include `email` column — it is GENERATED ALWAYS AS
-  -- (lower(identity_data->>'email')) STORED.
+  -- DO NOT include `email` column — GENERATED ALWAYS AS (lower(identity_data->>'email')).
   INSERT INTO auth.identities (
-    id,
-    user_id,
-    provider_id,
-    identity_data,
-    provider,
-    last_sign_in_at,
-    created_at,
-    updated_at
+    id, user_id, provider_id, identity_data, provider,
+    last_sign_in_at, created_at, updated_at
   ) VALUES
   (
     'aaaaaaaa-0001-0000-0000-000000000000',
@@ -115,10 +103,7 @@ BEGIN
     format('{"sub":"%s","email":"%s"}',
       'aaaaaaaa-0001-0000-0000-000000000000',
       'ci_player@test.local')::jsonb,
-    'email',
-    v_now,
-    v_now,
-    v_now
+    'email', v_now, v_now, v_now
   ),
   (
     'aaaaaaaa-0002-0000-0000-000000000000',
@@ -127,13 +112,9 @@ BEGIN
     format('{"sub":"%s","email":"%s"}',
       'aaaaaaaa-0002-0000-0000-000000000000',
       'ci_admin@test.local')::jsonb,
-    'email',
-    v_now,
-    v_now,
-    v_now
+    'email', v_now, v_now, v_now
   );
 
-  -- Return by UUID (not by email) to avoid stale-email lookup race
   RETURN QUERY
     SELECT u.id, u.email::text FROM auth.users u
     WHERE u.id IN (
@@ -146,21 +127,7 @@ $$;
 GRANT EXECUTE ON FUNCTION public.create_test_users() TO anon;
 GRANT EXECUTE ON FUNCTION public.create_test_users() TO authenticated;
 
--- ── Verification ─────────────────────────────────────────────────────────────
-DO $$
-BEGIN
-  IF NOT EXISTS (
-    SELECT 1 FROM pg_proc p
-    JOIN pg_namespace n ON n.oid = p.pronamespace
-    WHERE n.nspname = 'public' AND p.proname = 'create_test_users'
-  ) THEN
-    RAISE EXCEPTION '[008] VERIFICATION FAILED: create_test_users function not found.';
-  END IF;
-  RAISE NOTICE '[008] create_test_users: present. ✓';
-END;
-$$;
-
--- ── 2. create_regression_users ───────────────────────────────────────────────
+-- ── 2. create_regression_users (regression-suite: reg_player_one/two) ────────
 
 DROP FUNCTION IF EXISTS public.create_regression_users();
 
@@ -229,18 +196,10 @@ BEGIN
   );
 
   -- GoTrue v2 requires auth.identities for email/password sign-in.
-  -- id = user UUID as text; provider_id = same UUID text.
-  -- DO NOT include `email` column — it is GENERATED ALWAYS AS
-  -- (lower(identity_data->>'email')) STORED.
+  -- DO NOT include `email` column — GENERATED ALWAYS AS (lower(identity_data->>'email')).
   INSERT INTO auth.identities (
-    id,
-    user_id,
-    provider_id,
-    identity_data,
-    provider,
-    last_sign_in_at,
-    created_at,
-    updated_at
+    id, user_id, provider_id, identity_data, provider,
+    last_sign_in_at, created_at, updated_at
   ) VALUES
   (
     'bbbbbbbb-0001-0000-0000-000000000000',
@@ -249,10 +208,7 @@ BEGIN
     format('{"sub":"%s","email":"%s"}',
       'bbbbbbbb-0001-0000-0000-000000000000',
       'reg_player_one@test.atlasci.com')::jsonb,
-    'email',
-    v_now,
-    v_now,
-    v_now
+    'email', v_now, v_now, v_now
   ),
   (
     'bbbbbbbb-0002-0000-0000-000000000000',
@@ -261,10 +217,7 @@ BEGIN
     format('{"sub":"%s","email":"%s"}',
       'bbbbbbbb-0002-0000-0000-000000000000',
       'reg_player_two@test.atlasci.com')::jsonb,
-    'email',
-    v_now,
-    v_now,
-    v_now
+    'email', v_now, v_now, v_now
   );
 
   RETURN jsonb_build_object(
@@ -282,12 +235,19 @@ GRANT EXECUTE ON FUNCTION public.create_regression_users() TO authenticated;
 DO $$
 BEGIN
   IF NOT EXISTS (
-    SELECT 1 FROM pg_proc p
-    JOIN pg_namespace n ON n.oid = p.pronamespace
+    SELECT 1 FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace
+    WHERE n.nspname = 'public' AND p.proname = 'create_test_users'
+  ) THEN
+    RAISE EXCEPTION '[011] VERIFICATION FAILED: create_test_users not found.';
+  END IF;
+
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace
     WHERE n.nspname = 'public' AND p.proname = 'create_regression_users'
   ) THEN
-    RAISE EXCEPTION '[008] VERIFICATION FAILED: create_regression_users function not found.';
+    RAISE EXCEPTION '[011] VERIFICATION FAILED: create_regression_users not found.';
   END IF;
-  RAISE NOTICE '[008] create_regression_users: present. ✓';
+
+  RAISE NOTICE '[011] create_test_users + create_regression_users refreshed with token-column fix. ✓';
 END;
 $$;
