@@ -98,16 +98,12 @@ jobs:
           SVC_H  = {"apikey": SVC_KEY, "Authorization": f"Bearer {SVC_KEY}",
                     "Content-Type": "application/json"}
 
-          # Regression-specific fixture UUIDs — isolated from exploit suite
-          # Must be valid hex UUIDs (no non-hex chars like 'r')
+          # Regression-specific corridor/node/reward UUIDs (cccc prefix, valid hex)
+          # Passport/checkin UUIDs are handled by seed_regression_passports() RPC.
           CORRIDOR_ACTIVE_ID   = "cccc0001-0000-0000-0000-000000000001"
           CORRIDOR_INACTIVE_ID = "cccc0001-0000-0000-0000-000000000002"
           NODE_ID              = "cccc0002-0000-0000-0000-000000000001"
           REWARD_ID            = "cccc0005-0000-0000-0000-000000000001"
-          PASSPORT_ACTIVE_ID   = "cccc0003-0000-0000-0000-000000000001"
-          PASSPORT_COMPLETE_ID = "cccc0003-0000-0000-0000-000000000002"
-          PASSPORT_OTHER_ID    = "cccc0003-0000-0000-0000-000000000003"
-          CHECKIN_SEED_ID      = "cccc0004-0000-0000-0000-000000000001"
 
           def rpc(fn, args=None, headers=None):
               h = headers or ANON_H
