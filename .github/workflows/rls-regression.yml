@@ -81,21 +81,21 @@ jobs:
 
       - name: Seed regression fixtures into Supabase
         env:
-          SUPABASE_URL:      ${{ secrets.NEXT_PUBLIC_SUPABASE_URL }}
-          SUPABASE_ANON_KEY: ${{ secrets.NEXT_PUBLIC_SUPABASE_ANON_KEY }}
+          SUPABASE_URL:              ${{ secrets.NEXT_PUBLIC_SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
         run: |
           python3 << 'PYEOF'
           import os, time
           import httpx
 
-          URL      = os.environ["SUPABASE_URL"].rstrip("/")
-          ANON_KEY = os.environ["SUPABASE_ANON_KEY"]
-          REST     = f"{URL}/rest/v1"
+          URL     = os.environ["SUPABASE_URL"].rstrip("/")
+          SVC_KEY = os.environ["SUPABASE_SERVICE_ROLE_KEY"]
+          REST    = f"{URL}/rest/v1"
 
-          ANON_H = {"apikey": ANON_KEY, "Content-Type": "application/json"}
+          SVC_H = {"apikey": SVC_KEY, "Authorization": f"Bearer {SVC_KEY}", "Content-Type": "application/json"}
 
           def rpc(fn, args=None):
-              r = httpx.post(f"{REST}/rpc/{fn}", headers=ANON_H, json=args or {}, timeout=30)
+              r = httpx.post(f"{REST}/rpc/{fn}", headers=SVC_H, json=args or {}, timeout=30)
               if not r.is_success:
                   raise RuntimeError(f"rpc/{fn}: {r.status_code} {r.text}")
               return r.json()
