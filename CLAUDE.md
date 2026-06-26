@@ -116,8 +116,9 @@ Apply in order via Supabase SQL Editor or CLI. All migrations are idempotent.
 | 014 | `014_comprehensive_null_fix_ci_users.sql` | Dynamic loop fixes ALL nullable text columns — supersedes 011–013 NULL guessing | ⏳ **PENDING** |
 | 015 | `015_seed_ci_passports_helper.sql` | `seed_ci_passports()` + `seed_regression_passports()` SECURITY DEFINER RPCs — bypass passports RLS on INSERT | ⏳ **PENDING** |
 | 016 | `016_create_exploit_test_users.sql` | `create_exploit_test_users()` — creates `player_one_rls`/`player_two_rls` with deterministic UUIDs + NULL fix | ⏳ **PENDING** |
+| 017 | `017_grant_service_role_seed_functions.sql` | `GRANT EXECUTE … TO service_role` for all 8 CI seed functions locked on 2026-06-26 | ⏳ **PENDING** |
 
-**Apply order for CI to pass:** 014 → 015 → 016 (then 004, 005, 007 for RLS assertions to pass).
+**Apply order for CI to pass:** 014 → 015 → 016 → 017 (then 004, 005, 007 for RLS assertions to pass).
 
 **Sentinel checks** to verify post-apply:
 - `POST /rpc/create_test_users` → 200
