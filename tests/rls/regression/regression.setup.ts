@@ -93,15 +93,16 @@ async function authedUpsert(
   }
 }
 
-async function createUsersViaMigration008(): Promise<boolean> {
-  // Try the generalized create_test_users RPC first (migration 008).
-  // It accepts a users array — use the regression-specific credentials.
+async function createUsersViaMigration009(): Promise<boolean> {
+  // Use create_regression_users (migration 009/014) which inserts
+  // reg_player_one + reg_player_two directly into auth.users with
+  // deterministic UUIDs and the comprehensive NULL fix (no GoTrue, no email).
   try {
-    await rpc("create_test_users", {}, false);
-    console.log("  [reg setup] create_test_users (migration 008): ok");
+    await rpc("create_regression_users", {}, false);
+    console.log("  [reg setup] create_regression_users (migration 014): ok");
     return true;
   } catch (e) {
-    console.log("  [reg setup] create_test_users not available, falling back to signUp");
+    console.log("  [reg setup] create_regression_users not available, falling back to signUp");
     return false;
   }
 }
@@ -139,8 +140,8 @@ export async function setup(): Promise<void> {
 
   // ── Step 1: Create regression test users ─────────────────────────────────────
   console.log("\n── Step 1: users ─────────────────────────────────────────────");
-  const via008 = await createUsersViaMigration008();
-  if (!via008) {
+  const via009 = await createUsersViaMigration009();
+  if (!via009) {
     await signUpAndConfirm(REG.PLAYER_ONE_EMAIL, REG.PLAYER_ONE_PASS, "Regression Player One");
     await signUpAndConfirm(REG.PLAYER_TWO_EMAIL, REG.PLAYER_TWO_PASS, "Regression Player Two");
   }
