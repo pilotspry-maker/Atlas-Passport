@@ -83,7 +83,6 @@ jobs:
         env:
           SUPABASE_URL:      ${{ secrets.NEXT_PUBLIC_SUPABASE_URL }}
           SUPABASE_ANON_KEY: ${{ secrets.NEXT_PUBLIC_SUPABASE_ANON_KEY }}
-          SUPABASE_SVC_KEY:  ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
         run: |
           python3 << 'PYEOF'
           import os, time
@@ -91,79 +90,33 @@ jobs:
 
           URL      = os.environ["SUPABASE_URL"].rstrip("/")
           ANON_KEY = os.environ["SUPABASE_ANON_KEY"]
-          SVC_KEY  = os.environ["SUPABASE_SVC_KEY"]
           REST     = f"{URL}/rest/v1"
 
           ANON_H = {"apikey": ANON_KEY, "Content-Type": "application/json"}
-          SVC_H  = {"apikey": SVC_KEY, "Authorization": f"Bearer {SVC_KEY}",
-                    "Content-Type": "application/json"}
 
-          # Regression-specific corridor/node/reward UUIDs (cccc prefix, valid hex)
-          # Passport/checkin UUIDs are handled by seed_regression_passports() RPC.
-          CORRIDOR_ACTIVE_ID   = "cccc0001-0000-0000-0000-000000000001"
-          CORRIDOR_INACTIVE_ID = "cccc0001-0000-0000-0000-000000000002"
-          NODE_ID              = "cccc0002-0000-0000-0000-000000000001"
-          REWARD_ID            = "cccc0005-0000-0000-0000-000000000001"
-
-          def rpc(fn, args=None, headers=None):
-              h = headers or ANON_H
-              r = httpx.post(f"{REST}/rpc/{fn}", headers=h, json=args or {}, timeout=30)
+          def rpc(fn, args=None):
+              r = httpx.post(f"{REST}/rpc/{fn}", headers=ANON_H, json=args or {}, timeout=30)
               if not r.is_success:
                   raise RuntimeError(f"rpc/{fn}: {r.status_code} {r.text}")
               return r.json()
 
-          def svc_upsert(table, row):
-              h = {**SVC_H, "Prefer": "resolution=ignore-duplicates,return=minimal"}
-              r = httpx.post(f"{REST}/{table}", headers=h, json=row, timeout=20)
-              ok = r.status_code in (200, 201, 204, 409)
-              print(f"  svc_upsert {table}: {'ok' if ok else f'WARN {r.status_code} {r.text}'}")
-
-          # ── Step 1: Create regression users via migration 009 ──────────────
-          # FIX (2026-06-24): the regression suite uses the reg_player_one /
-          # reg_player_two namespace — these users do NOT exist in migration
-          # 008's create_test_users (which only seeds player_one_rls /
-          # player_two_rls for the exploit suite). Migration 009 adds the
-          # create_regression_users RPC, which inserts the two regression
-          # users directly into auth.users via SECURITY DEFINER (no GoTrue,
-          # no email, no rate limit). If this RPC fails, migrations are not
-          # applied and CI should fail loudly.
-          print("\n── Step 1: create regression users (DB → no GoTrue, no email) ─")
+          # ── Step 1: Create regression users (SECURITY DEFINER, no GoTrue) ─────
+          # create_regression_users inserts reg_player_one + reg_player_two
+          # directly into auth.users with deterministic UUIDs and NULL fix.
+          # If this fails with 404, migration 009 has not been applied.
+          print("\n── Step 1: create regression users ───────────────────────────")
           rpc("create_regression_users")
           time.sleep(1)  # let profiles trigger materialise
 
-          # ── Step 2: Seed corridors, node, reward via service role ──────────────
-          print("\n── Step 2: seed corridors, node, reward ──────────────────────")
-          svc_upsert("corridors", {
-              "id": CORRIDOR_ACTIVE_ID, "name": "Regression Corridor Active",
-              "description": "Regression test", "city": "Test City",
-              "is_active": True
-          })
-          svc_upsert("corridors", {
-              "id": CORRIDOR_INACTIVE_ID, "name": "Regression Corridor Inactive",
-              "description": "Inactive regression test", "city": "Test City",
-              "is_active": False
-          })
-          svc_upsert("nodes", {
-              "id": NODE_ID, "corridor_id": CORRIDOR_ACTIVE_ID,
-              "name": "Regression Node", "sequence": 1,
-              "latitude": 38.9, "longitude": -77.0, "is_active": True
-          })
-          svc_upsert("rewards", {
-              "id": REWARD_ID, "corridor_id": CORRIDOR_ACTIVE_ID,
-              "title": "Regression Reward", "description": "Regression test reward",
-              "redemption_code": "REG-TEST-001"
-          })
-
-          # ── Step 3: Seed passports + check-in (SECURITY DEFINER RPC) ─────────
-          # Direct service-role REST INSERT fails on passports: the RLS policy
-          # passports_insert_own has WITH CHECK (user_id = auth.uid()), and the
-          # service role does not bypass WITH CHECK on fresh INSERTs on this
-          # Supabase configuration.
-          # Fix: use SECURITY DEFINER RPC (migration 015) which runs as the
-          # function owner (postgres superuser) and bypasses RLS entirely.
-          print("\n── Step 3: seed passports + check-in (SECURITY DEFINER RPC) ──")
+          # ── Step 2: Seed all regression fixtures (SECURITY DEFINER RPC) ───────
+          # seed_regression_passports (migration 015) inserts corridors, node,
+          # reward, passports, and check-in in one SECURITY DEFINER call,
+          # bypassing RLS entirely. Direct service-role REST inserts are not
+          # used because service_role BYPASSRLS is unreliable on this Supabase
+          # configuration.
+          print("\n── Step 2: seed all regression fixtures (SECURITY DEFINER) ──")
           result = rpc("seed_regression_passports")
-          print(f"  passports seeded: {result}")
+          print(f"  fixtures seeded: {result}")
 
           print("\n── Regression fixtures seeded successfully ────────────────\n")
           PYEOF
