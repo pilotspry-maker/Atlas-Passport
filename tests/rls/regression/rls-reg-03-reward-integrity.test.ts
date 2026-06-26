@@ -198,7 +198,7 @@ describe("REG-3 Reward immutability and access control", () => {
 
   // ── REG-3f: Players cannot INSERT new reward rows ────────────────────────────
   it("REG-3f: authenticated player cannot INSERT a new reward row", async () => {
-    const fakeRewardId = "rrrrrrr5-0000-0000-0000-000000000099";
+    const fakeRewardId = "cccc0005-0000-0000-0000-000000000099";
     const res = await pgInsert(
       "rewards",
       {

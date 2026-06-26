@@ -113,10 +113,18 @@ Apply in order via Supabase SQL Editor or CLI. All migrations are idempotent.
 | 011 | `011_refresh_ci_user_functions.sql` | Refresh both CI user helpers + auth.identities row for GoTrue v2 | ✅ applied |
 | 012 | `012_add_email_change_to_ci_users.sql` | Add `email_change=''` and `phone=''` to CI user INSERT | ✅ applied |
 | 013 | `013_add_phone_change_to_ci_users.sql` | Add `phone_change=''` to CI user INSERT (GoTrue PhoneChange fix) | ⏳ **PENDING** |
-| 014 | `014_comprehensive_null_fix_ci_users.sql` | Dynamic loop fixes ALL nullable text columns — supersedes 011–013 NULL guessing | ⏳ **PENDING — apply next** |
+| 014 | `014_comprehensive_null_fix_ci_users.sql` | Dynamic loop fixes ALL nullable text columns — supersedes 011–013 NULL guessing | ⏳ **PENDING** |
+| 015 | `015_seed_ci_passports_helper.sql` | `seed_ci_passports()` + `seed_regression_passports()` SECURITY DEFINER RPCs — bypass passports RLS on INSERT | ⏳ **PENDING** |
+| 016 | `016_create_exploit_test_users.sql` | `create_exploit_test_users()` — creates `player_one_rls`/`player_two_rls` with deterministic UUIDs + NULL fix | ⏳ **PENDING** |
+
+**Apply order for CI to pass:** 014 → 015 → 016 (then 004, 005, 007 for RLS assertions to pass).
 
 **Sentinel checks** to verify post-apply:
 - `POST /rpc/create_test_users` → 200
+- `POST /rpc/create_exploit_test_users` → 200
+- `POST /rpc/create_regression_users` → 200
+- `POST /rpc/seed_ci_passports` → 200 with `{"status":"ok"}`
+- `POST /rpc/seed_regression_passports` → 200 with `{"status":"ok"}`
 - `POST /rpc/confirm_test_users` → 200
 - `GET  /check_ins_player_view` → 200
 - `GET  /rewards?select=name` → valid JSON

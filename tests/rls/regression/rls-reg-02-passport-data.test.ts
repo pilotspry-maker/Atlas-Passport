@@ -80,7 +80,7 @@ describe("REG-2 Passport data integrity", () => {
     const res = await pgInsert(
       "passports",
       {
-        id: "rrrrrrr3-0000-0000-0000-000000000099",
+        id: "cccc0003-0000-0000-0000-000000000099",
         user_id: "00000000-0000-0000-0000-000000000099",
         corridor_id: REG.CORRIDOR_ACTIVE_ID,
         status: "active",
@@ -100,7 +100,7 @@ describe("REG-2 Passport data integrity", () => {
     const res = await pgInsert(
       "passports",
       {
-        id: "rrrrrrr3-0000-0000-0000-000000000098",
+        id: "cccc0003-0000-0000-0000-000000000098",
         user_id: p1Id,
         corridor_id: REG.CORRIDOR_INACTIVE_ID,  // is_active = FALSE
         status: "active",
@@ -118,7 +118,7 @@ describe("REG-2 Passport data integrity", () => {
 
   // ── REG-2c ground truth: no row written for inactive corridor attempt ─────────
   it("REG-2c (ground truth): no passport row created in inactive corridor", async () => {
-    const badId = "rrrrrrr3-0000-0000-0000-000000000098";
+    const badId = "cccc0003-0000-0000-0000-000000000098";
     await pgInsert(
       "passports",
       { id: badId, user_id: p1Id, corridor_id: REG.CORRIDOR_INACTIVE_ID, status: "active" },
@@ -138,7 +138,7 @@ describe("REG-2 Passport data integrity", () => {
     const res = await pgInsert(
       "passports",
       {
-        id: "rrrrrrr3-0000-0000-0000-000000000097",
+        id: "cccc0003-0000-0000-0000-000000000097",
         user_id: p2Id,   // p1 is trying to own a passport on behalf of p2
         corridor_id: REG.CORRIDOR_ACTIVE_ID,
         status: "active",
@@ -212,7 +212,7 @@ describe("REG-2 Passport data integrity", () => {
     const res = await pgInsert(
       "check_ins",
       {
-        id: "rrrrrrr4-0000-0000-0000-000000000098",
+        id: "cccc0004-0000-0000-0000-000000000098",
         passport_id: REG.PASSPORT_OTHER_ID,   // owned by p2
         user_id: p1Id,
         node_id: REG.NODE_ID,
@@ -236,7 +236,7 @@ describe("REG-2 Passport data integrity", () => {
     const res = await pgInsert(
       "check_ins",
       {
-        id: "rrrrrrr4-0000-0000-0000-000000000097",
+        id: "cccc0004-0000-0000-0000-000000000097",
         passport_id: REG.PASSPORT_COMPLETE_ID,  // status = 'complete', owned by p2
         user_id: p2Id,
         node_id: REG.NODE_ID,
@@ -259,7 +259,7 @@ describe("REG-2 Passport data integrity", () => {
     const res = await pgInsert(
       "check_ins",
       {
-        id: "rrrrrrr4-0000-0000-0000-000000000096",
+        id: "cccc0004-0000-0000-0000-000000000096",
         passport_id: REG.PASSPORT_ACTIVE_ID,  // owned by p1
         user_id: p2Id,   // spoofed to p2's ID
         node_id: REG.NODE_ID,

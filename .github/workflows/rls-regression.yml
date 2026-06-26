@@ -158,32 +158,16 @@ jobs:
               "redemption_code": "REG-TEST-001"
           })
 
-          # ── Step 3: Seed passports + check-in (service role) ──────────────────
-          # GoTrue sign-in is NOT used — user UUIDs are deterministic (set by
-          # create_regression_users). RLS is tested by the regression test jobs;
-          # seeding is just fixture setup.
-          print("\n── Step 3: seed passports + check-in (service role) ──────────")
-          P1_ID = "bbbbbbbb-0001-0000-0000-000000000000"
-          P2_ID = "bbbbbbbb-0002-0000-0000-000000000000"
-
-          svc_upsert("passports", {
-              "id": PASSPORT_ACTIVE_ID, "user_id": P1_ID,
-              "corridor_id": CORRIDOR_ACTIVE_ID, "status": "active"
-          })
-          svc_upsert("check_ins", {
-              "id": CHECKIN_SEED_ID, "passport_id": PASSPORT_ACTIVE_ID,
-              "user_id": P1_ID, "node_id": NODE_ID, "status": "pending",
-              "proof_url": "https://example.com/reg-ci.jpg",
-              "proof_storage_path": "regression/ci.jpg"
-          })
-          svc_upsert("passports", {
-              "id": PASSPORT_COMPLETE_ID, "user_id": P2_ID,
-              "corridor_id": CORRIDOR_ACTIVE_ID, "status": "complete"
-          })
-          svc_upsert("passports", {
-              "id": PASSPORT_OTHER_ID, "user_id": P2_ID,
-              "corridor_id": CORRIDOR_ACTIVE_ID, "status": "active"
-          })
+          # ── Step 3: Seed passports + check-in (SECURITY DEFINER RPC) ─────────
+          # Direct service-role REST INSERT fails on passports: the RLS policy
+          # passports_insert_own has WITH CHECK (user_id = auth.uid()), and the
+          # service role does not bypass WITH CHECK on fresh INSERTs on this
+          # Supabase configuration.
+          # Fix: use SECURITY DEFINER RPC (migration 015) which runs as the
+          # function owner (postgres superuser) and bypasses RLS entirely.
+          print("\n── Step 3: seed passports + check-in (SECURITY DEFINER RPC) ──")
+          result = rpc("seed_regression_passports")
+          print(f"  passports seeded: {result}")
 
           print("\n── Regression fixtures seeded successfully ────────────────\n")
           PYEOF

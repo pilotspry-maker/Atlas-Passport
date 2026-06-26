@@ -31,23 +31,23 @@ export const AUTH = `${SUPABASE_URL}/auth/v1`;
 // Deterministic, isolated from the exploit suite.
 
 export const REG = {
-  // Corridors
-  CORRIDOR_ACTIVE_ID:   "rrrrrrr1-0000-0000-0000-000000000001",
-  CORRIDOR_INACTIVE_ID: "rrrrrrr1-0000-0000-0000-000000000002",
+  // Corridors — cccc0001 prefix, matching rls-regression.yml seed step
+  CORRIDOR_ACTIVE_ID:   "cccc0001-0000-0000-0000-000000000001",
+  CORRIDOR_INACTIVE_ID: "cccc0001-0000-0000-0000-000000000002",
 
   // Nodes
-  NODE_ID:              "rrrrrrr2-0000-0000-0000-000000000001",
+  NODE_ID:              "cccc0002-0000-0000-0000-000000000001",
 
   // Passports
-  PASSPORT_ACTIVE_ID:   "rrrrrrr3-0000-0000-0000-000000000001",  // owned by reg_player_one
-  PASSPORT_COMPLETE_ID: "rrrrrrr3-0000-0000-0000-000000000002",  // owned by reg_player_two
-  PASSPORT_OTHER_ID:    "rrrrrrr3-0000-0000-0000-000000000003",  // owned by reg_player_two (for IDOR tests)
+  PASSPORT_ACTIVE_ID:   "cccc0003-0000-0000-0000-000000000001",  // owned by reg_player_one
+  PASSPORT_COMPLETE_ID: "cccc0003-0000-0000-0000-000000000002",  // owned by reg_player_two
+  PASSPORT_OTHER_ID:    "cccc0003-0000-0000-0000-000000000003",  // owned by reg_player_two (for IDOR tests)
 
   // Check-ins
-  CHECKIN_SEED_ID:      "rrrrrrr4-0000-0000-0000-000000000001",
+  CHECKIN_SEED_ID:      "cccc0004-0000-0000-0000-000000000001",
 
   // Rewards
-  REWARD_ID:            "rrrrrrr5-0000-0000-0000-000000000001",
+  REWARD_ID:            "cccc0005-0000-0000-0000-000000000001",
 
   // Test users — isolated from exploit suite
   PLAYER_ONE_EMAIL: "reg_player_one@test.atlasci.com",
