@@ -171,9 +171,13 @@ After the first successful CI run:
 
 ### Fixture namespace rules
 
-All regression fixtures use the `rrrrrrr` UUID prefix. Never use UUIDs from the
+All regression fixtures use the `cccc` UUID prefix. Never use UUIDs from the
 exploit suite (`aaaaaaaa`–`eeeeeeee`) in regression tests — they are separate
 fixture namespaces to prevent cross-suite interference.
+
+Note: the original `rrrrrrr` prefix was invalid hex (PostgreSQL UUID type requires
+0-9 and a-f only). Replaced with `cccc` to match the CI workflow seeding and
+avoid "invalid input syntax for type uuid" errors.
 
 ---
 
@@ -181,13 +185,13 @@ fixture namespaces to prevent cross-suite interference.
 
 | Name | UUID |
 |---|---|
-| `CORRIDOR_ACTIVE_ID` | `rrrrrrr1-0000-0000-0000-000000000001` |
-| `CORRIDOR_INACTIVE_ID` | `rrrrrrr1-0000-0000-0000-000000000002` |
-| `NODE_ID` | `rrrrrrr2-0000-0000-0000-000000000001` |
-| `PASSPORT_ACTIVE_ID` | `rrrrrrr3-0000-0000-0000-000000000001` (player_one) |
-| `PASSPORT_COMPLETE_ID` | `rrrrrrr3-0000-0000-0000-000000000002` (player_two) |
-| `PASSPORT_OTHER_ID` | `rrrrrrr3-0000-0000-0000-000000000003` (player_two, active — for IDOR tests) |
-| `CHECKIN_SEED_ID` | `rrrrrrr4-0000-0000-0000-000000000001` |
-| `REWARD_ID` | `rrrrrrr5-0000-0000-0000-000000000001` |
+| `CORRIDOR_ACTIVE_ID` | `cccc0001-0000-0000-0000-000000000001` |
+| `CORRIDOR_INACTIVE_ID` | `cccc0001-0000-0000-0000-000000000002` |
+| `NODE_ID` | `cccc0002-0000-0000-0000-000000000001` |
+| `PASSPORT_ACTIVE_ID` | `cccc0003-0000-0000-0000-000000000001` (player_one) |
+| `PASSPORT_COMPLETE_ID` | `cccc0003-0000-0000-0000-000000000002` (player_two) |
+| `PASSPORT_OTHER_ID` | `cccc0003-0000-0000-0000-000000000003` (player_two, active — for IDOR tests) |
+| `CHECKIN_SEED_ID` | `cccc0004-0000-0000-0000-000000000001` |
+| `REWARD_ID` | `cccc0005-0000-0000-0000-000000000001` |
 | `PLAYER_ONE_EMAIL` | `reg_player_one@test.atlasci.com` |
 | `PLAYER_TWO_EMAIL` | `reg_player_two@test.atlasci.com` |
