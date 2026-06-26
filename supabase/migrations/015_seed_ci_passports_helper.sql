@@ -78,8 +78,10 @@ BEGIN
 END;
 $$;
 
-GRANT EXECUTE ON FUNCTION public.seed_ci_passports() TO anon;
-GRANT EXECUTE ON FUNCTION public.seed_ci_passports() TO authenticated;
+REVOKE EXECUTE ON FUNCTION public.seed_ci_passports() FROM PUBLIC;
+REVOKE EXECUTE ON FUNCTION public.seed_ci_passports() FROM anon;
+REVOKE EXECUTE ON FUNCTION public.seed_ci_passports() FROM authenticated;
+GRANT EXECUTE ON FUNCTION public.seed_ci_passports() TO service_role;
 
 -- ── 2. seed_regression_passports — regression suite ──────────────────────────
 --
@@ -171,8 +173,10 @@ BEGIN
 END;
 $$;
 
-GRANT EXECUTE ON FUNCTION public.seed_regression_passports() TO anon;
-GRANT EXECUTE ON FUNCTION public.seed_regression_passports() TO authenticated;
+REVOKE EXECUTE ON FUNCTION public.seed_regression_passports() FROM PUBLIC;
+REVOKE EXECUTE ON FUNCTION public.seed_regression_passports() FROM anon;
+REVOKE EXECUTE ON FUNCTION public.seed_regression_passports() FROM authenticated;
+GRANT EXECUTE ON FUNCTION public.seed_regression_passports() TO service_role;
 
 DO $$
 BEGIN

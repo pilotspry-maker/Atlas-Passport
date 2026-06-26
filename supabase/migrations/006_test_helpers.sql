@@ -66,10 +66,11 @@ BEGIN
 END;
 $$;
 
--- Grant execute to the anon role so the test seeder can call it via RPC
--- without needing any JWT (the function itself validates the allow-list)
-GRANT EXECUTE ON FUNCTION public.confirm_test_users(TEXT) TO anon;
-GRANT EXECUTE ON FUNCTION public.confirm_test_users(TEXT) TO authenticated;
+-- Service-role only — SECURITY DEFINER functions must not be callable by anon/authenticated
+REVOKE EXECUTE ON FUNCTION public.confirm_test_users(TEXT) FROM PUBLIC;
+REVOKE EXECUTE ON FUNCTION public.confirm_test_users(TEXT) FROM anon;
+REVOKE EXECUTE ON FUNCTION public.confirm_test_users(TEXT) FROM authenticated;
+GRANT EXECUTE ON FUNCTION public.confirm_test_users(TEXT) TO service_role;
 
 -- ── VERIFY ────────────────────────────────────────────────────────────────────
 

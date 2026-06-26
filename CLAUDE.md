@@ -228,6 +228,16 @@ These are non-negotiable. Most of them were promoted from audit findings.
 - **Never** ship a schema change that depends on a column the migration has not yet added — the rewards trigger failure showed why.
 - Do not run destructive SQL (DROP TABLE, TRUNCATE, DELETE without WHERE) on production without explicit confirmation from `pilotspry@gmail.com`.
 
+### SECURITY DEFINER function grant rule (enforced 2026-06-26)
+Every `CREATE OR REPLACE FUNCTION` in the `public` schema with `SECURITY DEFINER` **must** immediately follow with these four statements — no exceptions for seed, CI, cleanup, or regression functions:
+```sql
+REVOKE EXECUTE ON FUNCTION public.<fn_name>(<args>) FROM PUBLIC;
+REVOKE EXECUTE ON FUNCTION public.<fn_name>(<args>) FROM anon;
+REVOKE EXECUTE ON FUNCTION public.<fn_name>(<args>) FROM authenticated;
+GRANT EXECUTE ON FUNCTION public.<fn_name>(<args>) TO service_role;
+```
+Only grant `anon` or `authenticated` to a SECURITY DEFINER function if it is explicitly a user-facing RPC (e.g. `get_my_profile`) where unauthenticated/authenticated access is intentional and the function itself enforces its own authorization logic. All CI seed functions (`create_test_users`, `create_regression_users`, `create_exploit_test_users`, `seed_ci_passports`, `seed_regression_passports`, `seed_ci_fixtures`, `seed_ci_fixtures_v2`, `confirm_test_users`, `cleanup_ci_fixtures`) are service_role-only.
+
 ### Deploy & build
 - A green Vercel build is **not** proof of health. Always verify env vars and Supabase connectivity separately.
 - If env vars are the issue, fix env vars — do **not** modify source to compensate.

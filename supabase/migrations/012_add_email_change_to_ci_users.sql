@@ -118,8 +118,10 @@ BEGIN
 END;
 $$;
 
-GRANT EXECUTE ON FUNCTION public.create_test_users() TO anon;
-GRANT EXECUTE ON FUNCTION public.create_test_users() TO authenticated;
+REVOKE EXECUTE ON FUNCTION public.create_test_users() FROM PUBLIC;
+REVOKE EXECUTE ON FUNCTION public.create_test_users() FROM anon;
+REVOKE EXECUTE ON FUNCTION public.create_test_users() FROM authenticated;
+GRANT EXECUTE ON FUNCTION public.create_test_users() TO service_role;
 
 -- ── 2. create_regression_users ───────────────────────────────────────────────
 
@@ -223,8 +225,10 @@ BEGIN
 END;
 $$;
 
-GRANT EXECUTE ON FUNCTION public.create_regression_users() TO anon;
-GRANT EXECUTE ON FUNCTION public.create_regression_users() TO authenticated;
+REVOKE EXECUTE ON FUNCTION public.create_regression_users() FROM PUBLIC;
+REVOKE EXECUTE ON FUNCTION public.create_regression_users() FROM anon;
+REVOKE EXECUTE ON FUNCTION public.create_regression_users() FROM authenticated;
+GRANT EXECUTE ON FUNCTION public.create_regression_users() TO service_role;
 
 DO $$
 BEGIN
