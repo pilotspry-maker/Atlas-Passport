@@ -86,14 +86,13 @@ jobs:
           SUPABASE_SVC_KEY:  ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
         run: |
           python3 << 'PYEOF'
-          import os, time, json, base64
+          import os, time
           import httpx
 
           URL      = os.environ["SUPABASE_URL"].rstrip("/")
           ANON_KEY = os.environ["SUPABASE_ANON_KEY"]
           SVC_KEY  = os.environ["SUPABASE_SVC_KEY"]
           REST     = f"{URL}/rest/v1"
-          AUTH     = f"{URL}/auth/v1"
 
           ANON_H = {"apikey": ANON_KEY, "Content-Type": "application/json"}
           SVC_H  = {"apikey": SVC_KEY, "Authorization": f"Bearer {SVC_KEY}",
@@ -110,9 +109,6 @@ jobs:
           PASSPORT_OTHER_ID    = "cccc0003-0000-0000-0000-000000000003"
           CHECKIN_SEED_ID      = "cccc0004-0000-0000-0000-000000000001"
 
-          PLAYER_ONE = ("reg_player_one@test.atlasci.com", "RegPlayer1!RLS")
-          PLAYER_TWO = ("reg_player_two@test.atlasci.com", "RegPlayer2!RLS")
-
           def rpc(fn, args=None, headers=None):
               h = headers or ANON_H
               r = httpx.post(f"{REST}/rpc/{fn}", headers=h, json=args or {}, timeout=30)
@@ -125,23 +121,6 @@ jobs:
               r = httpx.post(f"{REST}/{table}", headers=h, json=row, timeout=20)
               ok = r.status_code in (200, 201, 204, 409)
               print(f"  svc_upsert {table}: {'ok' if ok else f'WARN {r.status_code} {r.text}'}")
-
-          def sign_in(email, password):
-              r = httpx.post(f"{AUTH}/token?grant_type=password",
-                             headers=ANON_H, json={"email": email, "password": password}, timeout=20)
-              if not r.is_success:
-                  raise RuntimeError(f"signIn {email}: {r.status_code} {r.text}")
-              jwt = r.json()["access_token"]
-              pad = "=" * (4 - len(jwt.split(".")[1]) % 4)
-              uid = json.loads(base64.b64decode(jwt.split(".")[1] + pad))["sub"]
-              return jwt, uid
-
-          def authed_upsert(table, row, jwt):
-              h = {**ANON_H, "Authorization": f"Bearer {jwt}",
-                   "Prefer": "resolution=ignore-duplicates,return=minimal"}
-              r = httpx.post(f"{REST}/{table}", headers=h, json=row, timeout=20)
-              ok = r.status_code in (200, 201, 204, 409)
-              print(f"  authed_upsert {table}: {'ok' if ok else f'WARN {r.status_code} {r.text}'}")
 
           # ── Step 1: Create regression users via migration 009 ──────────────
           # FIX (2026-06-24): the regression suite uses the reg_player_one /
@@ -179,29 +158,32 @@ jobs:
               "redemption_code": "REG-TEST-001"
           })
 
-          # ── Step 3: Seed passports + check-in ─────────────────────────────────
-          print("\n── Step 3: seed passports + check-in ─────────────────────────")
-          p1_jwt, p1_id = sign_in(*PLAYER_ONE)
-          p2_jwt, p2_id = sign_in(*PLAYER_TWO)
+          # ── Step 3: Seed passports + check-in (service role) ──────────────────
+          # GoTrue sign-in is NOT used — user UUIDs are deterministic (set by
+          # create_regression_users). RLS is tested by the regression test jobs;
+          # seeding is just fixture setup.
+          print("\n── Step 3: seed passports + check-in (service role) ──────────")
+          P1_ID = "bbbbbbbb-0001-0000-0000-000000000000"
+          P2_ID = "bbbbbbbb-0002-0000-0000-000000000000"
 
-          authed_upsert("passports", {
-              "id": PASSPORT_ACTIVE_ID, "user_id": p1_id,
+          svc_upsert("passports", {
+              "id": PASSPORT_ACTIVE_ID, "user_id": P1_ID,
               "corridor_id": CORRIDOR_ACTIVE_ID, "status": "active"
-          }, p1_jwt)
-          authed_upsert("check_ins", {
+          })
+          svc_upsert("check_ins", {
               "id": CHECKIN_SEED_ID, "passport_id": PASSPORT_ACTIVE_ID,
-              "user_id": p1_id, "node_id": NODE_ID, "status": "pending",
+              "user_id": P1_ID, "node_id": NODE_ID, "status": "pending",
               "proof_url": "https://example.com/reg-ci.jpg",
               "proof_storage_path": "regression/ci.jpg"
-          }, p1_jwt)
-          authed_upsert("passports", {
-              "id": PASSPORT_COMPLETE_ID, "user_id": p2_id,
+          })
+          svc_upsert("passports", {
+              "id": PASSPORT_COMPLETE_ID, "user_id": P2_ID,
               "corridor_id": CORRIDOR_ACTIVE_ID, "status": "complete"
-          }, p2_jwt)
-          authed_upsert("passports", {
-              "id": PASSPORT_OTHER_ID, "user_id": p2_id,
+          })
+          svc_upsert("passports", {
+              "id": PASSPORT_OTHER_ID, "user_id": P2_ID,
               "corridor_id": CORRIDOR_ACTIVE_ID, "status": "active"
-          }, p2_jwt)
+          })
 
           print("\n── Regression fixtures seeded successfully ────────────────\n")
           PYEOF
