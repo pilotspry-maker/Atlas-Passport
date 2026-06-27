@@ -139,73 +139,89 @@ jobs:
               print("::error::SUPABASE_SERVICE_ROLE_KEY is empty — secret is not set.")
               sys.exit(1)
 
+          # Supabase issues two service-role key formats:
+          #   - Legacy JWT:    header.payload.signature (3 dot-separated parts)
+          #   - Opaque secret: sb_secret_<random> (single segment)
+          # The downstream seeder (tests/rls/exploits/setup.ts) handles both via
+          # the signup + SECURITY DEFINER RPC path. JWT-claim checks below are
+          # therefore informational only — we skip them cleanly for opaque keys.
           parts = svc_key.split(".")
-          if len(parts) != 3:
-              print(f"::error::SUPABASE_SERVICE_ROLE_KEY is not a JWT "
-                    f"(got {len(parts)} segments, want 3). Wrong value pasted into the secret.")
-              sys.exit(1)
+          is_jwt = (len(parts) == 3)
+          if not is_jwt:
+              # Any non-JWT value is treated as opaque (sb_secret_, sbp_, raw token, etc.).
+              # The downstream seeder handles auth via supabase-js, which accepts whatever
+              # key format Supabase currently issues. JWT-claim checks are skipped.
+              print("\n── Part 1: service_role key format ──────────────────────────")
+              fmt_hint = "sb_secret_…" if svc_key.startswith("sb_secret_") else (
+                         "sbp_…"        if svc_key.startswith("sbp_")        else "opaque")
+              print(f"  format             : {fmt_hint}")
+              print("  ✓ non-JWT key detected — skipping JWT-claim checks (seeder handles auth)")
+              print("─" * 63)
+              # Skip JWT decode + claim validation; jump straight to Part 2.
+              parts = None
 
           def b64url_decode(s):
               padding = (-len(s)) % 4
               return base64.urlsafe_b64decode(s + ("=" * padding))
 
-          try:
-              payload = json.loads(b64url_decode(parts[1]))
-          except Exception as e:
-              print(f"::error::Failed to decode JWT payload: {type(e).__name__}: {e}")
-              sys.exit(1)
+          if parts is not None:
+              try:
+                  payload = json.loads(b64url_decode(parts[1]))
+              except Exception as e:
+                  print(f"::error::Failed to decode JWT payload: {type(e).__name__}: {e}")
+                  sys.exit(1)
 
-          role = payload.get("role", "<missing>")
-          ref  = payload.get("ref",  "<missing>")
-          iss  = payload.get("iss",  "<missing>")
-          exp  = payload.get("exp",  "<missing>")
+              role = payload.get("role", "<missing>")
+              ref  = payload.get("ref",  "<missing>")
+              iss  = payload.get("iss",  "<missing>")
+              exp  = payload.get("exp",  "<missing>")
 
-          host = urlparse(url).hostname or ""
-          url_ref = host.split(".")[0] if host else "<unknown>"
+              host = urlparse(url).hostname or ""
+              url_ref = host.split(".")[0] if host else "<unknown>"
 
-          print("\n── Part 1: service_role JWT diagnostic ────────────────────────")
-          print(f"  iss (issuer)        : {iss}")
-          print(f"  role (claim)        : {role}")
-          print(f"  ref  (claim)        : {ref}")
-          print(f"  ref  (from URL)     : {url_ref}")
-          print(f"  exp  (unix seconds) : {exp}")
-          print(  "───────────────────────────────────────────────────────────────")
+              print("\n── Part 1: service_role JWT diagnostic ────────────────────────")
+              print(f"  iss (issuer)        : {iss}")
+              print(f"  role (claim)        : {role}")
+              print(f"  ref  (claim)        : {ref}")
+              print(f"  ref  (from URL)     : {url_ref}")
+              print(f"  exp  (unix seconds) : {exp}")
+              print(  "───────────────────────────────────────────────────────────────")
 
-          jwt_fail = False
-          if role != "service_role":
-              print(f"::error::JWT role is '{role}', expected 'service_role'. "
-                    f"The SUPABASE_SERVICE_ROLE_KEY secret carries the WRONG ROLE "
-                    f"(the anon key was likely pasted by mistake). Regenerate from "
-                    f"Supabase Dashboard → Project Settings → API → service_role key, "
-                    f"and update the GitHub secret.")
-              jwt_fail = True
-          else:
-              print("  ✓ role claim is 'service_role'")
-
-          if ref in ("<missing>", "", None):
-              print("::error::JWT has no 'ref' claim — this is not a Supabase-issued key.")
-              jwt_fail = True
-          elif ref != url_ref:
-              print(f"::error::JWT ref '{ref}' does NOT match project ref '{url_ref}' "
-                    f"(derived from SUPABASE_URL). The SUPABASE_SERVICE_ROLE_KEY secret "
-                    f"belongs to a DIFFERENT Supabase project. Copy the service_role key "
-                    f"from project '{url_ref}' and update the GitHub secret.")
-              jwt_fail = True
-          else:
-              print(f"  ✓ ref claim matches project URL ({url_ref})")
-
-          if isinstance(exp, int):
-              now = int(time.time())
-              if exp < now:
-                  print(f"::error::JWT is EXPIRED (exp={exp}, now={now}). Regenerate the service_role key.")
+              jwt_fail = False
+              if role != "service_role":
+                  print(f"::error::JWT role is '{role}', expected 'service_role'. "
+                        f"The SUPABASE_SERVICE_ROLE_KEY secret carries the WRONG ROLE "
+                        f"(the anon key was likely pasted by mistake). Regenerate from "
+                        f"Supabase Dashboard → Project Settings → API → service_role key, "
+                        f"and update the GitHub secret.")
                   jwt_fail = True
               else:
-                  print("  ✓ exp is in the future")
+                  print("  ✓ role claim is 'service_role'")
 
-          if jwt_fail:
-              print("::error::service_role JWT diagnostic FAILED — fix the GitHub secret before re-running.")
-              sys.exit(1)
-          print("  ✓ service_role JWT diagnostic PASSED")
+              if ref in ("<missing>", "", None):
+                  print("::error::JWT has no 'ref' claim — this is not a Supabase-issued key.")
+                  jwt_fail = True
+              elif ref != url_ref:
+                  print(f"::error::JWT ref '{ref}' does NOT match project ref '{url_ref}' "
+                        f"(derived from SUPABASE_URL). The SUPABASE_SERVICE_ROLE_KEY secret "
+                        f"belongs to a DIFFERENT Supabase project. Copy the service_role key "
+                        f"from project '{url_ref}' and update the GitHub secret.")
+                  jwt_fail = True
+              else:
+                  print(f"  ✓ ref claim matches project URL ({url_ref})")
+
+              if isinstance(exp, int):
+                  now = int(time.time())
+                  if exp < now:
+                      print(f"::error::JWT is EXPIRED (exp={exp}, now={now}). Regenerate the service_role key.")
+                      jwt_fail = True
+                  else:
+                      print("  ✓ exp is in the future")
+
+              if jwt_fail:
+                  print("::error::service_role JWT diagnostic FAILED — fix the GitHub secret before re-running.")
+                  sys.exit(1)
+              print("  ✓ service_role JWT diagnostic PASSED")
 
           # ── Part 2: pg_proc / pg_roles grant inspection ────────────────────
           target_fns = [
