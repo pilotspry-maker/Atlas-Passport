@@ -39,3 +39,6 @@ next-env.d.ts
 .env.production
 .env.staging
 .env.development
+
+__pycache__/
+*.pyc

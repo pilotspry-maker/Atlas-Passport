@@ -12,6 +12,12 @@
  *   with exploit-suite fixtures (0xAA–0xEE prefix).
  */
 
+import {
+  anonAuth,
+  userAuth,
+  serviceAuth,
+} from "../../../src/lib/supabase/auth-headers";
+
 // ─── Env ──────────────────────────────────────────────────────────────────────
 
 function requireEnv(key: string): string {
@@ -59,18 +65,20 @@ export const REG = {
 // ─── Header factories ─────────────────────────────────────────────────────────
 
 export function anonHeaders(): Record<string, string> {
-  return { apikey: ANON_KEY };
+  return anonAuth(ANON_KEY);
 }
 
 export function authedHeaders(jwt: string): Record<string, string> {
-  return { apikey: ANON_KEY, Authorization: `Bearer ${jwt}` };
+  return userAuth(ANON_KEY, jwt);
 }
 
+/**
+ * Service-role headers. Dispatches on SUPABASE_SERVICE_ROLE_KEY format so a
+ * future rotation from a legacy JWT (eyJ…) to sb_secret_* is a zero-code
+ * change — only the GitHub secret value needs updating.
+ */
 export function serviceHeaders(): Record<string, string> {
-  return {
-    apikey: SERVICE_ROLE_KEY,
-    Authorization: `Bearer ${SERVICE_ROLE_KEY}`,
-  };
+  return serviceAuth(SERVICE_ROLE_KEY);
 }
 
 // ─── Auth helpers ─────────────────────────────────────────────────────────────

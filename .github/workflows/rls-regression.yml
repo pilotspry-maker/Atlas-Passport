@@ -422,15 +422,20 @@ jobs:
           python3 << 'PYEOF'
           import os, sys, json
           import httpx
+          # Format-agnostic header dispatch — see tests/rls/_auth_headers.py.
+          # service_auth() emits {apikey, Authorization} for legacy JWT and
+          # {apikey}-only for sb_secret_/sb_publishable_, per Supabase docs.
+          sys.path.insert(0, os.getcwd())
+          from tests.rls._auth_headers import service_auth, KeyFormatError
 
           URL     = os.environ["SUPABASE_URL"].rstrip("/")
           SVC_KEY = os.environ["SUPABASE_SERVICE_ROLE_KEY"]
           REST    = f"{URL}/rest/v1"
-          HEADERS = {
-              "apikey":        SVC_KEY,
-              "Authorization": f"Bearer {SVC_KEY}",
-              "Content-Type":  "application/json",
-          }
+          try:
+              HEADERS = {**service_auth(SVC_KEY), "Content-Type": "application/json"}
+          except KeyFormatError as e:
+              print(f"::error::SUPABASE_SERVICE_ROLE_KEY rejected by service_auth(): {e}")
+              sys.exit(1)
 
           print("\n── Pre-seed validation: verify_service_role_permissions() ─────")
           try:
@@ -554,14 +559,21 @@ jobs:
           SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
         run: |
           python3 << 'PYEOF'
-          import os, time
+          import os, sys, time
           import httpx
+          # Format-agnostic header dispatch — see tests/rls/_auth_headers.py.
+          sys.path.insert(0, os.getcwd())
+          from tests.rls._auth_headers import service_auth, KeyFormatError
 
           URL     = os.environ["SUPABASE_URL"].rstrip("/")
           SVC_KEY = os.environ["SUPABASE_SERVICE_ROLE_KEY"]
           REST    = f"{URL}/rest/v1"
 
-          SVC_H = {"apikey": SVC_KEY, "Authorization": f"Bearer {SVC_KEY}", "Content-Type": "application/json"}
+          try:
+              SVC_H = {**service_auth(SVC_KEY), "Content-Type": "application/json"}
+          except KeyFormatError as e:
+              print(f"::error::SUPABASE_SERVICE_ROLE_KEY rejected by service_auth(): {e}")
+              sys.exit(1)
 
           def rpc(fn, args=None):
               r = httpx.post(f"{REST}/rpc/{fn}", headers=SVC_H, json=args or {}, timeout=30)

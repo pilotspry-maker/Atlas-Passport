@@ -29,6 +29,8 @@ import json
 import httpx
 import pytest
 
+from tests.rls._auth_headers import anon_auth, user_auth, service_auth
+
 # ─── Config ──────────────────────────────────────────────────────────────────
 
 SUPABASE_URL       = os.environ["SUPABASE_URL"].rstrip("/")
@@ -57,23 +59,22 @@ PLAYER_TWO_PASS  = "TestPlayer2!RLS"
 
 def anon_headers() -> dict:
     """No JWT — hits as the anon role."""
-    return {"apikey": ANON_KEY}
+    return anon_auth(ANON_KEY)
 
 
 def authed_headers(access_token: str) -> dict:
     """Authenticated user JWT."""
-    return {
-        "apikey": ANON_KEY,
-        "Authorization": f"Bearer {access_token}",
-    }
+    return user_auth(ANON_KEY, access_token)
 
 
 def service_headers() -> dict:
-    """Service role — bypasses all RLS (admin operations only)."""
-    return {
-        "apikey": SERVICE_ROLE_KEY,
-        "Authorization": f"Bearer {SERVICE_ROLE_KEY}",
-    }
+    """
+    Service role — bypasses all RLS (admin operations only).
+
+    Dispatches on SUPABASE_SERVICE_ROLE_KEY format via service_auth() so a
+    future rotation from a legacy JWT to sb_secret_* is a zero-code change.
+    """
+    return service_auth(SERVICE_ROLE_KEY)
 
 
 def get_token(email: str, password: str) -> str:
