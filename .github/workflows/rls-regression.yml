@@ -79,6 +79,104 @@ jobs:
       - name: Install httpx
         run: pip install httpx
 
+      # ── Diagnostic: decode SUPABASE_SERVICE_ROLE_KEY JWT claims ─────────────
+      # Prints `role` and `ref` from the JWT payload so we can verify the
+      # GitHub secret actually belongs to this project AND carries the
+      # service_role claim. We never print the JWT itself or its signature —
+      # only the public claims (role, ref, iss, exp) and a pass/fail verdict.
+      #
+      # Why this exists: PostgREST returns 42501 ("permission denied for
+      # function") when the JWT decodes to anon or to a different project's
+      # service_role — even after GRANT EXECUTE … TO service_role lands
+      # correctly on the DB. This step disambiguates the failure mode.
+      - name: Diagnose service_role JWT claims
+        env:
+          SUPABASE_URL:              ${{ secrets.NEXT_PUBLIC_SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+        run: |
+          set -euo pipefail
+
+          if [ -z "${SUPABASE_SERVICE_ROLE_KEY:-}" ]; then
+            echo "::error::SUPABASE_SERVICE_ROLE_KEY is empty — secret is not set in this environment."
+            exit 1
+          fi
+          if [ -z "${SUPABASE_URL:-}" ]; then
+            echo "::error::SUPABASE_URL (from NEXT_PUBLIC_SUPABASE_URL) is empty."
+            exit 1
+          fi
+
+          # base64url decode the JWT payload (segment 2 of 3). pad to a
+          # multiple of 4, swap url-safe alphabet, then base64 -d.
+          payload_b64="$(printf '%s' "$SUPABASE_SERVICE_ROLE_KEY" | cut -d. -f2)"
+          if [ -z "$payload_b64" ]; then
+            echo "::error::SUPABASE_SERVICE_ROLE_KEY is not a JWT (no payload segment). Likely the wrong value was pasted into the secret."
+            exit 1
+          fi
+          pad=$(( (4 - ${#payload_b64} % 4) % 4 ))
+          payload_b64_padded="$payload_b64"
+          # Guard: printf '=%.0s' with no args still emits '=' once, so only
+          # append padding when actually needed.
+          if [ "$pad" -gt 0 ]; then
+            payload_b64_padded="${payload_b64}$(printf '=%.0s' $(seq 1 $pad))"
+          fi
+          payload_json="$(printf '%s' "$payload_b64_padded" | tr '_-' '/+' | base64 -d 2>/dev/null || true)"
+          if [ -z "$payload_json" ]; then
+            echo "::error::Failed to base64-decode JWT payload. The secret is not a well-formed JWT."
+            exit 1
+          fi
+
+          role="$(printf '%s' "$payload_json" | jq -r '.role // "<missing>"')"
+          ref="$(printf  '%s' "$payload_json" | jq -r '.ref  // "<missing>"')"
+          iss="$(printf  '%s' "$payload_json" | jq -r '.iss  // "<missing>"')"
+          exp="$(printf  '%s' "$payload_json" | jq -r '.exp  // "<missing>"')"
+
+          # Derive expected ref from SUPABASE_URL: https://<ref>.supabase.co
+          url_host="$(printf '%s' "$SUPABASE_URL" | sed -E 's#^https?://##; s#/.*$##')"
+          url_ref="$(printf '%s' "$url_host" | cut -d. -f1)"
+
+          echo "── service_role JWT diagnostic ─────────────────────────"
+          echo "  iss (issuer)        : $iss"
+          echo "  role (claim)        : $role"
+          echo "  ref  (claim)        : $ref"
+          echo "  ref  (from URL)     : $url_ref"
+          echo "  exp  (unix seconds) : $exp"
+          echo "────────────────────────────────────────────────────────"
+
+          fail=0
+          if [ "$role" != "service_role" ]; then
+            echo "::error::JWT role is '$role', expected 'service_role'. The SUPABASE_SERVICE_ROLE_KEY secret is the WRONG ROLE (likely the anon key was pasted by mistake). Regenerate from Supabase Dashboard → Project Settings → API → service_role key, and update the GitHub secret."
+            fail=1
+          else
+            echo "  ✓ role claim is 'service_role'"
+          fi
+
+          if [ "$ref" = "<missing>" ] || [ -z "$ref" ]; then
+            echo "::error::JWT has no 'ref' claim — this is not a Supabase-issued key."
+            fail=1
+          elif [ "$ref" != "$url_ref" ]; then
+            echo "::error::JWT ref '$ref' does NOT match project ref '$url_ref' (derived from SUPABASE_URL). The SUPABASE_SERVICE_ROLE_KEY secret belongs to a DIFFERENT Supabase project. Copy the service_role key from project '$url_ref' and update the GitHub secret."
+            fail=1
+          else
+            echo "  ✓ ref claim matches project URL ($url_ref)"
+          fi
+
+          # Check expiry if present (informational; Supabase keys are long-lived)
+          if [ "$exp" != "<missing>" ] && [ -n "$exp" ]; then
+            now="$(date -u +%s)"
+            if [ "$exp" -lt "$now" ] 2>/dev/null; then
+              echo "::error::JWT is EXPIRED (exp=$exp, now=$now). Regenerate the service_role key."
+              fail=1
+            else
+              echo "  ✓ exp is in the future"
+            fi
+          fi
+
+          if [ "$fail" -ne 0 ]; then
+            echo "::error::service_role JWT diagnostic FAILED — fix the GitHub secret before re-running."
+            exit 1
+          fi
+          echo "  ✓ service_role JWT diagnostic PASSED"
+
       - name: Seed regression fixtures into Supabase
         env:
           SUPABASE_URL:              ${{ secrets.NEXT_PUBLIC_SUPABASE_URL }}
