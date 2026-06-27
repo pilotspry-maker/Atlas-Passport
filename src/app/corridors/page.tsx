@@ -10,30 +10,33 @@ export default async function CorridorsPage() {
   const { data: { user } } = await supabase.auth.getUser()
   if (!user) redirect('/auth/login')
 
-  // If user has an active passport, go there
-  const { data: activePassportData } = await supabase
-    .from('passports')
-    .select('id')
-    .eq('user_id', user.id)
-    .eq('status', 'active')
-    .maybeSingle()
-  const activePassport = activePassportData as { id: string } | null
+  // Fire all three Supabase queries in parallel. The active-passport check is
+  // still a redirect gate, but we don't gain anything by waiting on it before
+  // kicking off the list fetches — if the redirect fires, the extra work is
+  // discarded; if it doesn't, we've saved one full round-trip on LCP.
+  const [activePassportRes, corridorsRes, prevRes] = await Promise.all([
+    supabase
+      .from('passports')
+      .select('id')
+      .eq('user_id', user.id)
+      .eq('status', 'active')
+      .maybeSingle(),
+    supabase
+      .from('corridors')
+      .select('*, nodes(count)')
+      .eq('is_active', true)
+      .order('created_at'),
+    supabase
+      .from('passports')
+      .select('corridor_id, status')
+      .eq('user_id', user.id),
+  ])
 
+  const activePassport = activePassportRes.data as { id: string } | null
   if (activePassport) redirect('/passport')
 
-  const { data } = await supabase
-    .from('corridors')
-    .select('*, nodes(count)')
-    .eq('is_active', true)
-    .order('created_at')
-
-  const corridors = data as unknown as CorridorRow[] | null
-
-  const { data: prevData } = await supabase
-    .from('passports')
-    .select('corridor_id, status')
-    .eq('user_id', user.id)
-  const previousPassports = prevData as { corridor_id: string; status: string }[] | null
+  const corridors = corridorsRes.data as unknown as CorridorRow[] | null
+  const previousPassports = prevRes.data as { corridor_id: string; status: string }[] | null
 
   const completedCorridorIds = new Set(
     previousPassports?.filter(p => p.status === 'complete').map(p => p.corridor_id) ?? []
