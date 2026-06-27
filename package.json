@@ -46,10 +46,11 @@
     "postcss": "^8.5.10",
     "tailwindcss": "^3.4.6",
     "typescript": "^5.5.3",
-    "vitest": "^2.1.9"
+    "vitest": "^4.1.9"
   },
   "overrides": {
     "prismjs": "^1.30.0",
-    "cookie": "^1.1.1"
+    "cookie": "^1.1.1",
+    "postcss": "^8.5.10"
   }
 }
