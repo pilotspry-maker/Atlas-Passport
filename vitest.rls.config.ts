@@ -27,9 +27,11 @@ export default defineConfig({
     include: ["tests/rls/exploits/**/*.test.ts"],
 
     // Sequential execution — tests share a live DB; parallel could
-    // produce race conditions on fixture rows
+    // produce race conditions on fixture rows.
+    // Vitest 4: poolOptions was dropped from InlineConfig types;
+    // fileParallelism:false forces all test files into a single worker.
     pool: "forks",
-    poolOptions: { forks: { singleFork: true } },
+    fileParallelism: false,
 
     // 30-second timeout per test (network calls to Supabase)
     testTimeout: 30_000,
