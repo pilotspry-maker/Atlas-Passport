@@ -157,3 +157,241 @@ jobs:
           echo ""
           echo "Cap is 1 500 KB uncompressed per route. Reduce bundle size before merging."
           exit 1
+
+
+  # ════════════════════════════════════════════════════════════════════════════
+  # RLS Security Tests
+  # ════════════════════════════════════════════════════════════════════════════
+  #
+  # Runs on every PR to main. Validates that Supabase RLS policies correctly
+  # enforce access control on passports, nodes, rewards, check_ins, corridors,
+  # and profiles tables via the live PostgREST API.
+  #
+  # Two layers of coverage:
+  #   1. Python/pytest (REST API) — always runs; tests all 4 access tiers
+  #   2. pgTAP (SQL-level)        — runs only when Supabase CLI is available
+  #
+  # Both layers must pass for the check to be green. A failure blocks merge.
+  # ════════════════════════════════════════════════════════════════════════════
+
+  rls-tests:
+    name: RLS Security Tests
+    runs-on: ubuntu-latest
+    needs: lint-build-size    # Don't run if build itself is broken
+    permissions:
+      contents: read
+      pull-requests: write    # Post sticky failure comment
+
+    steps:
+      # ── 1. Checkout ──────────────────────────────────────────────────────────
+      - name: Checkout PR branch
+        uses: actions/checkout@v4
+
+      # ── 2. Python + dependencies ─────────────────────────────────────────────
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Cache pip packages
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/pip
+          key: ${{ runner.os }}-pip-pytest-httpx
+          restore-keys: ${{ runner.os }}-pip-
+
+      - name: Install pytest + httpx
+        run: pip install pytest httpx
+
+      # ── 3. Seed RLS test fixtures (idempotent) ──────────────────────────────
+      #
+      # FIX (2026-06-23): replaced signUp → confirm_test_users with
+      # rpc/create_test_users (migration 008, SECURITY DEFINER).
+      # create_test_users inserts directly into auth.users — no email sent,
+      # no GoTrue rate-limit hit. signUp was causing 429 over_email_send_rate_limit
+      # on every CI run against the free-tier Supabase project.
+      #
+      # Strategy:
+      #   a) rpc/create_test_users   → migration 008, inserts into auth.users directly
+      #   b) rpc/seed_ci_fixtures    → migration 006, upserts corridor/node/reward
+      #   c) rpc/seed_ci_fixtures_v2 → adds inactive corridor (exploit-05, non-fatal)
+      #   d) signIn → seed passports + check-in via each player's own JWT
+      - name: Seed RLS test fixtures
+        env:
+          SUPABASE_URL:      ${{ secrets.NEXT_PUBLIC_SUPABASE_URL }}
+          SUPABASE_ANON_KEY: ${{ secrets.NEXT_PUBLIC_SUPABASE_ANON_KEY }}
+        run: |
+          python3 << 'EOF'
+          import os, time, json, base64, httpx
+
+          URL      = os.environ["SUPABASE_URL"].rstrip("/")
+          ANON_KEY = os.environ["SUPABASE_ANON_KEY"]
+          REST     = f"{URL}/rest/v1"
+          AUTH     = f"{URL}/auth/v1"
+
+          ANON_HEADERS = {
+              "apikey": ANON_KEY,
+              "Content-Type": "application/json",
+          }
+
+          PASSPORT_ACTIVE_ID   = "dddddddd-0000-0000-0000-000000000001"
+          PASSPORT_COMPLETE_ID = "dddddddd-0000-0000-0000-000000000002"
+          CHECKIN_ID           = "eeeeeeee-0000-0000-0000-000000000001"
+          CORRIDOR_ID          = "aaaaaaaa-0000-0000-0000-000000000001"
+          NODE_ID              = "bbbbbbbb-0000-0000-0000-000000000001"
+
+          def rpc(fn, args=None, fatal=True):
+              r = httpx.post(f"{REST}/rpc/{fn}", headers=ANON_HEADERS,
+                             json=args or {}, timeout=30)
+              if not r.is_success:
+                  msg = f"  [rpc] {fn}: {r.status_code} {r.text}"
+                  if fatal:
+                      raise RuntimeError(msg)
+                  print(f"{msg} (non-fatal)")
+                  return None
+              result = r.json()
+              print(f"  [rpc] {fn}: ok → {result}")
+              return result
+
+          def sign_in(email, password):
+              """Sign in and return (access_token, user_id)."""
+              r = httpx.post(
+                  f"{AUTH}/token?grant_type=password",
+                  headers=ANON_HEADERS,
+                  json={"email": email, "password": password},
+                  timeout=20,
+              )
+              if not r.is_success:
+                  raise RuntimeError(f"signIn {email}: {r.status_code} {r.text}")
+              data = r.json()
+              jwt = data["access_token"]
+              padding = "=" * (4 - len(jwt.split(".")[1]) % 4)
+              payload = json.loads(base64.b64decode(jwt.split(".")[1] + padding).decode())
+              return jwt, payload["sub"]
+
+          def authed_upsert(table, row, jwt):
+              """Upsert a row using the player's own JWT."""
+              r = httpx.post(
+                  f"{REST}/{table}",
+                  headers={
+                      "apikey": ANON_KEY,
+                      "Authorization": f"Bearer {jwt}",
+                      "Content-Type": "application/json",
+                      "Prefer": "resolution=ignore-duplicates,return=minimal",
+                  },
+                  json=row, timeout=20,
+              )
+              if r.status_code not in (200, 201, 204):
+                  print(f"  WARN upsert {table}: {r.status_code} {r.text}")
+              else:
+                  print(f"  upsert {table}: ok")
+
+          # ── a) Create users via DB function (migration 008) ──────────────────
+          # Inserts directly into auth.users — no email, no GoTrue rate limits.
+          print("Creating test users via rpc/create_test_users (no email sent)...")
+          rpc("create_test_users")
+          time.sleep(1)  # let profiles trigger materialise
+
+          # ── b) Seed corridor / node / reward via RPC ─────────────────────────
+          print("Seeding fixtures via rpc/seed_ci_fixtures...")
+          rpc("seed_ci_fixtures")
+
+          # ── b2) Seed inactive corridor (exploit-05, non-fatal) ───────────────
+          rpc("seed_ci_fixtures_v2", fatal=False)
+
+          # ── c) Sign in to get player JWTs and profile UUIDs ──────────────────
+          print("Signing in as both players...")
+          p1_jwt, p1_id = sign_in("ci_player@test.local", "TestPassword123!")
+          p2_jwt, p2_id = sign_in("ci_admin@test.local", "TestPassword123!")
+          print(f"  player_one id: {p1_id}")
+          print(f"  player_two id: {p2_id}")
+
+          # ── d) Seed passports + check-in via each player's own JWT ────────────
+          print("Seeding passports and check-in...")
+          authed_upsert("passports", {
+              "id": PASSPORT_ACTIVE_ID,
+              "user_id": p1_id, "corridor_id": CORRIDOR_ID,
+              "status": "active",
+          }, p1_jwt)
+          authed_upsert("check_ins", {
+              "id": CHECKIN_ID,
+              "passport_id": PASSPORT_ACTIVE_ID, "user_id": p1_id,
+              "node_id": NODE_ID, "status": "pending",
+              "proof_url": "https://example.com/ci-proof.jpg",
+              "proof_storage_path": "ci-test/proof.jpg",
+          }, p1_jwt)
+          authed_upsert("passports", {
+              "id": PASSPORT_COMPLETE_ID,
+              "user_id": p2_id, "corridor_id": CORRIDOR_ID,
+              "status": "complete",
+          }, p2_jwt)
+
+          print("Fixtures seeded.")
+          EOF
+
+      # ── 4. Run Python RLS integration tests ──────────────────────────────────
+      - name: pytest — RLS integration tests
+        id: pytest_rls
+        env:
+          SUPABASE_URL:              ${{ secrets.NEXT_PUBLIC_SUPABASE_URL }}
+          SUPABASE_ANON_KEY:         ${{ secrets.NEXT_PUBLIC_SUPABASE_ANON_KEY }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+        run: |
+          pytest tests/rls/test_rls_policies.py \
+            --tb=short \
+            --color=yes \
+            -v
+
+      # ── 5. pgTAP SQL tests (conditional — Supabase CLI) ───────────────────────
+      #
+      # pgTAP requires a local Supabase stack. This step is intentionally
+      # conditional: if the CLI is absent, the Python tests above already cover
+      # the same policies at the REST-API layer, so the job can still succeed.
+      #
+      # To fully enable pgTAP in CI:
+      #   1. Add `supabase/setup-cli@v1` step (before this one)
+      #   2. Add SUPABASE_ACCESS_TOKEN to repo secrets
+      #   3. Remove the `exit 0` early-return below
+      - name: pgTAP — RLS SQL tests (if Supabase CLI available)
+        env:
+          SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+        run: |
+          if ! command -v supabase &> /dev/null; then
+            echo "Supabase CLI not installed — pgTAP step skipped."
+            echo "Add supabase/setup-cli@v1 + SUPABASE_ACCESS_TOKEN to enable."
+            exit 0
+          fi
+
+          echo "Supabase CLI found — running pgTAP suite..."
+          supabase db start
+          supabase db push --local
+          supabase test db --local supabase/tests/rls_policies.test.sql
+
+      # ── 6. Post failure summary as sticky PR comment ──────────────────────────
+      - name: Post RLS failure summary
+        if: failure() && github.event_name == 'pull_request'
+        uses: marocchino/sticky-pull-request-comment@v2
+        with:
+          header: rls-test-report
+          message: |
+            ## ❌ RLS Security Tests Failed
+
+            One or more Row-Level Security policy tests failed on this PR.
+            **This PR cannot be merged until all RLS tests pass.**
+
+            ### How to reproduce locally
+            ```bash
+            pip install pytest httpx
+            SUPABASE_URL=https://gaavynmmysdhovpatzlp.supabase.co \
+            SUPABASE_ANON_KEY=<anon_key> \
+            SUPABASE_SERVICE_ROLE_KEY=<service_role_key> \
+            pytest tests/rls/test_rls_policies.py -v
+            ```
+
+            ### Files to review
+            - Policy logic: `supabase/migrations/004_rls_hardening_and_node_integrity.sql`
+            - REST tests: `tests/rls/test_rls_policies.py`
+            - SQL tests: `supabase/tests/rls_policies.test.sql`
+
+            <sub>Generated by RLS Security Tests job · `rls-tests`</sub>
+

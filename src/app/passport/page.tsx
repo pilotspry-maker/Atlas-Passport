@@ -25,7 +25,7 @@ async function getPassportData(userId: string): Promise<PassportFull | null> {
   const [corridorRes, nodesRes, checkInsRes, rewardRes] = await Promise.all([
     supabase.from('corridors').select('*').eq('id', passport.corridor_id).single(),
     supabase.from('nodes').select('*').eq('corridor_id', passport.corridor_id).eq('is_active', true).order('sequence'),
-    supabase.from('check_ins').select('*').eq('passport_id', passport.id),
+    supabase.from('check_ins_player_view').select('*').eq('passport_id', passport.id),
     supabase.from('rewards').select('*').eq('corridor_id', passport.corridor_id).maybeSingle(),
   ])
 

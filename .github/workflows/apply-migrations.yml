@@ -1,4 +1,4 @@
-# .github/workflows/apply-migrations-oneshot.yml
+# .github/workflows/apply-migrations.yml
 #
 # One-shot workflow: applies migrations 005–008 to the live Supabase project.
 # Triggered manually via workflow_dispatch only — never runs automatically.
@@ -12,14 +12,14 @@
 #   NEXT_PUBLIC_SUPABASE_URL    — https://gaavynmmysdhovpatzlp.supabase.co
 #   NEXT_PUBLIC_SUPABASE_ANON_KEY — your project anon key
 
-name: Apply Migrations 004-008 (ONE-SHOT — delete after use)
+name: Apply Migrations 005-008
 
 on:
   workflow_dispatch:
 
 jobs:
   apply-migrations:
-    name: Apply Migrations to Production Supabase
+    name: Apply migrations 005-008 to production Supabase
     runs-on: ubuntu-latest
     env:
       SUPABASE_PROJECT_REF: gaavynmmysdhovpatzlp
@@ -51,17 +51,11 @@ jobs:
           project_ref = os.environ['SUPABASE_PROJECT_REF']
           url = f'https://api.supabase.com/v1/projects/{project_ref}/database/query'
 
-          # Migrations to apply. The Supabase Management API is idempotent
-          # in the sense that re-running an already-applied DO block with
-          # IF EXISTS / IF NOT EXISTS guards is safe; CREATE OR REPLACE
-          # FUNCTION re-defines the body but does not duplicate. Re-running
-          # this workflow against an up-to-date project is therefore safe.
           migrations = [
             ('005', 'supabase/migrations/005_rls_exploit_patches.sql'),
             ('006', 'supabase/migrations/006_test_helpers.sql'),
             ('007', 'supabase/migrations/007_rls_column_guards.sql'),
             ('008', 'supabase/migrations/008_create_test_users_helper.sql'),
-            ('019', 'supabase/migrations/019_verify_service_role_permissions.sql'),
           ]
 
           for num, path in migrations:

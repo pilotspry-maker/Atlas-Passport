@@ -9,8 +9,16 @@
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
-    "lint": "next lint",
-    "email": "email dev --dir emails --port 3001"
+    "lint": "eslint src",
+    "email": "email dev --dir emails --port 3001",
+    "test:rls-exploits": "vitest run --config vitest.rls.config.ts",
+    "test:rls-exploits:watch": "vitest --config vitest.rls.config.ts",
+    "test:rls-regression": "vitest run --config vitest.regression.config.ts",
+    "test:rls-regression:watch": "vitest --config vitest.regression.config.ts",
+    "test:rls-all": "npm run test:rls-exploits && npm run test:rls-regression",
+    "test:rls-local": "bash scripts/test-rls-local.sh",
+    "test:rls-local:all": "bash scripts/test-rls-local.sh --all",
+    "prepare": "if [ -d .git ]; then cp scripts/pre-commit-rls.sh .git/hooks/pre-commit && chmod +x .git/hooks/pre-commit; fi"
   },
   "dependencies": {
     "@react-email/code-block": "^0.2.1",
@@ -37,7 +45,8 @@
     "eslint-config-next": "^16.2.9",
     "postcss": "^8.5.10",
     "tailwindcss": "^3.4.6",
-    "typescript": "^5.5.3"
+    "typescript": "^5.5.3",
+    "vitest": "^2.1.9"
   },
   "overrides": {
     "prismjs": "^1.30.0",
