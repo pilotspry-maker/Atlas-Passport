@@ -98,7 +98,7 @@ export default async function PassportPage({ searchParams }: Props) {
       </div>
 
       {/* Live updates — refreshes page when a check-in is approved/rejected */}
-      <RealtimePassportUpdater passportId={passport.id} />
+      <RealtimePassportUpdater passportId={passport.id} passportStatus={passport.status} />
 
       {/* Submitted confirmation */}
       {params.submitted && (
