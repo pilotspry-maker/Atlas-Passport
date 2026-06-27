@@ -397,6 +397,157 @@ jobs:
               print("\n  ✗ Grant inspection identified specific issues — fix them then re-run.")
           PYEOF
 
+      # ── Pre-seed validation: verify_service_role_permissions() ──────────────
+      # Calls the introspection RPC defined by migration 019 to check that:
+      #   - every seed/CI helper function exists (no MISSING verdict)
+      #   - service_role has EXECUTE on every one (no FAIL verdict)
+      #   - authenticator has USAGE on schema public (no FAIL verdict)
+      #   - no unexpected function overloads exist (WARN — does not block)
+      #
+      # Same channel as the seed step (PostgREST + service_role JWT) so it
+      # catches the exact failure mode that produced the original 42501s:
+      # if anything in the role→grant→function chain is off, this step
+      # surfaces it BEFORE the seed step runs and prints the specific
+      # GRANT statement needed to fix each offending row.
+      #
+      # Graceful when migration 019 is not yet applied: prints an
+      # actionable message and continues. After the migration is applied
+      # once (via apply-migrations-oneshot.yml), every subsequent run
+      # asserts the live grant state automatically.
+      - name: Pre-seed validation — verify service_role permissions
+        env:
+          SUPABASE_URL:              ${{ secrets.NEXT_PUBLIC_SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+        run: |
+          python3 << 'PYEOF'
+          import os, sys, json
+          import httpx
+
+          URL     = os.environ["SUPABASE_URL"].rstrip("/")
+          SVC_KEY = os.environ["SUPABASE_SERVICE_ROLE_KEY"]
+          REST    = f"{URL}/rest/v1"
+          HEADERS = {
+              "apikey":        SVC_KEY,
+              "Authorization": f"Bearer {SVC_KEY}",
+              "Content-Type":  "application/json",
+          }
+
+          print("\n── Pre-seed validation: verify_service_role_permissions() ─────")
+          try:
+              r = httpx.post(f"{REST}/rpc/verify_service_role_permissions",
+                             headers=HEADERS, json={}, timeout=15)
+          except Exception as e:
+              print(f"::error::Network error calling verify_service_role_permissions: {type(e).__name__}: {e}")
+              sys.exit(1)
+
+          # 404 → migration 019 not yet applied. This is a known transitional
+          # state on the first PR after merging migration 019. Print a clear
+          # message and continue so the seed step still runs (and will fail
+          # naturally if grants are actually broken). After the operator runs
+          # apply-migrations-oneshot, all future runs will validate normally.
+          if r.status_code == 404:
+              print("  ⚠ verify_service_role_permissions() not found (HTTP 404).")
+              print("    Migration 019 has not been applied to this project yet.")
+              print("    Apply it via:")
+              print("      gh workflow run apply-migrations-oneshot.yml \\")
+              print("        --repo pilotspry-maker/Atlas-Passport")
+              print("    Then re-run this job. Continuing to seed step for now.")
+              sys.exit(0)
+
+          # 401 / 403 / other 42501 → the validation RPC itself is unreachable.
+          # That's a stronger signal than a single seed RPC failing: it means
+          # the JWT/grant chain is broken at the schema or role level.
+          if r.status_code in (401, 403):
+              print(f"::error::verify_service_role_permissions() returned HTTP {r.status_code}: {r.text}")
+              print("    The service_role JWT cannot call any RPC. Possible causes:")
+              print("      • JWT decoded to anon (re-check the JWT diagnostic step above)")
+              print("      • authenticator lacks USAGE on schema public")
+              print("      • service_role lacks EXECUTE on the validation RPC itself")
+              print("    Fix the secret or grants and re-run.")
+              sys.exit(1)
+
+          if not r.is_success:
+              print(f"::error::verify_service_role_permissions() failed: HTTP {r.status_code}: {r.text}")
+              sys.exit(1)
+
+          rows = r.json()
+          if not isinstance(rows, list):
+              print(f"::error::Unexpected response shape: {type(rows).__name__}: {str(rows)[:200]}")
+              sys.exit(1)
+
+          if not rows:
+              print("::error::verify_service_role_permissions() returned no rows. This means the")
+              print("    target function list is empty or every targeted function is missing.")
+              print("    Apply migrations 006-019 via apply-migrations-oneshot.yml.")
+              sys.exit(1)
+
+          # ── Summary table (always printed, OK or not) ───────────────────────
+          def yn(b):
+              if b is True:  return "yes"
+              if b is False: return "NO "
+              return "?  "
+
+          # Header — column widths chosen to fit the longest realistic content
+          print(f"  {'function(args)':<40}  {'owner':<14}  {'ovl':>3}  "
+                f"{'svc':>3}  {'auth-r':>6}  {'verdict':<8}")
+          print("  " + "─" * 90)
+          fail_rows    = []
+          missing_rows = []
+          warn_rows    = []
+          for row in rows:
+              sig = f"{row['function_name']}({row['function_args']})"
+              if len(sig) > 40:
+                  sig = sig[:37] + "..."
+              owner = (row['owner_role'] or '<none>')[:14]
+              ovl   = row['overload_count'] if row['overload_count'] is not None else 0
+              svc   = yn(row['service_role_execute'])
+              authn = yn(row['authenticator_execute'])
+              verdict = row['verdict']
+              print(f"  {sig:<40}  {owner:<14}  {ovl:>3}  "
+                    f"{svc:>3}  {authn:>6}  {verdict:<8}")
+              if verdict == 'FAIL':
+                  fail_rows.append(row)
+              elif verdict == 'MISSING':
+                  missing_rows.append(row)
+              elif verdict == 'WARN':
+                  warn_rows.append(row)
+          print("  " + "─" * 90)
+
+          # Schema-level state (constant across rows)
+          first = rows[0]
+          print()
+          print(f"  authenticator has USAGE on public : {yn(first['authenticator_usage_on_public'])}")
+          print(f"  service_role  has USAGE on public : {yn(first['service_role_usage_on_public'])}")
+          print(f"  service_role rolbypassrls         : {yn(first['service_role_bypassrls'])}")
+
+          # ── Verdict reporting ───────────────────────────────────────────────
+          if warn_rows:
+              print(f"\n  ⚠ {len(warn_rows)} WARN row(s) — non-blocking:")
+              for row in warn_rows:
+                  print(f"    - public.{row['function_name']}({row['function_args']})")
+                  print(f"      {row['detail']}")
+
+          if missing_rows:
+              print(f"\n::error::{len(missing_rows)} target function(s) are MISSING from the project:")
+              for row in missing_rows:
+                  print(f"    - public.{row['function_name']}")
+                  print(f"      {row['detail']}")
+              print("\n  Apply the relevant migrations via apply-migrations-oneshot.yml.")
+
+          if fail_rows:
+              print(f"\n::error::{len(fail_rows)} function(s) have INSUFFICIENT GRANTS for service_role:")
+              for row in fail_rows:
+                  print(f"    - public.{row['function_name']}({row['function_args']})")
+                  print(f"      {row['detail']}")
+              print("\n  Apply the GRANT statements above to the project and re-run.")
+
+          if fail_rows or missing_rows:
+              print("\n::error::Pre-seed validation FAILED — fix the grants/migrations above before seeding.")
+              sys.exit(1)
+
+          print("\n  ✓ Pre-seed validation PASSED — all seed/CI functions are callable by service_role.")
+          PYEOF
+
       - name: Seed regression fixtures into Supabase
         env:
           SUPABASE_URL:              ${{ secrets.NEXT_PUBLIC_SUPABASE_URL }}
