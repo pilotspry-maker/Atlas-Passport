@@ -169,22 +169,27 @@ Run these in sequence using two browser sessions (or two terminal windows) logge
 - **Player A** — a regular test account (not admin)
 - **Player B** — a second regular test account with a complete corridor passport
 
-Get both players' JWTs by signing in:
+Get both players' JWTs by signing in. The snippets reference `$NEXT_PUBLIC_SUPABASE_ANON_KEY` — export it first from your local `.env` or the Supabase dashboard:
+
+```bash
+export NEXT_PUBLIC_SUPABASE_ANON_KEY="sb_publishable_..."
+```
+
 ```bash
 # Replace with your test account credentials
 P1_JWT=$(curl -s "https://gaavynmmysdhovpatzlp.supabase.co/auth/v1/token?grant_type=password" \
-  -H "apikey: sb_publishable_1BPrFxSYIb__I7JZUbgimQ_RZcVR_oU" \
+  -H "apikey: $NEXT_PUBLIC_SUPABASE_ANON_KEY" \
   -H "Content-Type: application/json" \
   -d '{"email":"player_one_rls@test.atlas","password":"TestPlayer1!RLS"}' \
   | python3 -c "import sys,json; print(json.load(sys.stdin)['access_token'])")
 
 P2_JWT=$(curl -s "https://gaavynmmysdhovpatzlp.supabase.co/auth/v1/token?grant_type=password" \
-  -H "apikey: sb_publishable_1BPrFxSYIb__I7JZUbgimQ_RZcVR_oU" \
+  -H "apikey: $NEXT_PUBLIC_SUPABASE_ANON_KEY" \
   -H "Content-Type: application/json" \
   -d '{"email":"player_two_rls@test.atlas","password":"TestPlayer2!RLS"}' \
   | python3 -c "import sys,json; print(json.load(sys.stdin)['access_token'])")
 
-ANON="sb_publishable_1BPrFxSYIb__I7JZUbgimQ_RZcVR_oU"
+ANON="$NEXT_PUBLIC_SUPABASE_ANON_KEY"
 URL="https://gaavynmmysdhovpatzlp.supabase.co/rest/v1"
 ```
 
