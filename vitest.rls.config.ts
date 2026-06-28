@@ -26,11 +26,6 @@ export default defineConfig({
     // Test file pattern — only the exploit suite
     include: ["tests/rls/exploits/**/*.test.ts"],
 
-    // Sequential execution — tests share a live DB; parallel could
-    // produce race conditions on fixture rows
-    pool: "forks",
-    poolOptions: { forks: { singleFork: true } },
-
     // 30-second timeout per test (network calls to Supabase)
     testTimeout: 30_000,
     hookTimeout: 30_000,
