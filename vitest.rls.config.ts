@@ -26,6 +26,14 @@ export default defineConfig({
     // Test file pattern — only the exploit suite
     include: ["tests/rls/exploits/**/*.test.ts"],
 
+    // Sequential execution — tests share a live Supabase DB; parallel runs
+    // produce race conditions on fixture rows. Vitest 4 defaults to
+    // fileParallelism: true, so this must be set explicitly. poolOptions
+    // was dropped from Vitest 4's InlineConfig types; fileParallelism:false
+    // forces all test files into a single worker.
+    pool: "forks",
+    fileParallelism: false,
+
     // 30-second timeout per test (network calls to Supabase)
     testTimeout: 30_000,
     hookTimeout: 30_000,

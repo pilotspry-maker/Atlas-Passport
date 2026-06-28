@@ -36,6 +36,14 @@ export default defineConfig({
     // Only the regression suite — not the exploit suite
     include: ["tests/rls/regression/**/*.test.ts"],
 
+    // Sequential execution — tests share live DB state; parallel creates
+    // race conditions on fixture rows. Vitest 4 defaults to
+    // fileParallelism: true, so this must be set explicitly. poolOptions
+    // was dropped from Vitest 4's InlineConfig types; fileParallelism:false
+    // forces all test files into a single worker.
+    pool: "forks",
+    fileParallelism: false,
+
     // Network timeout (Supabase PostgREST round-trip)
     testTimeout: 30_000,
     hookTimeout: 30_000,
