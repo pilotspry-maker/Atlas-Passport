@@ -1,0 +1,82 @@
+# .github/workflows/verify-rls.yml
+#
+# Read-only RLS posture check for Atlas Passport.
+# Runs scripts/verify_rls.sh against the live Supabase project on every PR
+# targeting main, and on direct pushes to main. Fails the build if any of
+# the 7 invariants from the 2026-06 security lockdown is violated.
+#
+# Reference: docs/LAUNCH_STABILITY.md §1
+#
+# Required secrets:
+#   SUPABASE_DB_URL — postgres connection string with read access to the
+#                     target Supabase project. Suggested role: a dedicated
+#                     `rls_verifier` user with SELECT on pg_catalog only.
+name: Verify RLS Invariants
+
+on:
+  pull_request:
+    branches:
+      - main
+  push:
+    branches:
+      - main
+  # Allow on-demand re-runs without a code change.
+  workflow_dispatch: {}
+
+# Cancel superseded runs on the same PR/branch.
+concurrency:
+  group: verify-rls-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  verify-rls:
+    name: Verify RLS invariants against Supabase
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Install postgresql-client
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install --yes --no-install-recommends postgresql-client
+          psql --version
+
+      - name: Refuse to run without a DB URL
+        env:
+          SUPABASE_DB_URL: ${{ secrets.SUPABASE_DB_URL }}
+        run: |
+          if [ -z "${SUPABASE_DB_URL:-}" ]; then
+            echo "::error::SUPABASE_DB_URL secret is not set on this repo."
+            echo "Add a read-only postgres connection string at:"
+            echo "  Settings → Secrets and variables → Actions → SUPABASE_DB_URL"
+            exit 1
+          fi
+
+      - name: Run scripts/verify_rls.sh
+        env:
+          SUPABASE_DB_URL: ${{ secrets.SUPABASE_DB_URL }}
+        run: |
+          set -euo pipefail
+          chmod +x scripts/verify_rls.sh
+          ./scripts/verify_rls.sh
+
+      - name: Summary
+        if: always()
+        run: |
+          if [ "${{ job.status }}" = "success" ]; then
+            echo "### ✅ RLS invariants verified" >> "$GITHUB_STEP_SUMMARY"
+            echo "All 7 invariants from the 2026-06 security lockdown are intact." >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "### ❌ RLS invariant check failed" >> "$GITHUB_STEP_SUMMARY"
+            echo "" >> "$GITHUB_STEP_SUMMARY"
+            echo "One or more of the 7 lockdown invariants is broken on the target Supabase project." >> "$GITHUB_STEP_SUMMARY"
+            echo "" >> "$GITHUB_STEP_SUMMARY"
+            echo "**Do not merge until this passes.** See \`docs/LAUNCH_STABILITY.md\` §1 for the full invariant list and remediation paths." >> "$GITHUB_STEP_SUMMARY"
+          fi
