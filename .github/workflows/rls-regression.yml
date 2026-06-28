@@ -585,6 +585,22 @@ jobs:
                   raise RuntimeError(f"rpc/{fn}: {r.status_code} {r.text}")
               return r.json()
 
+          # ── Step 0: Pre-clean child rows for regression users ──────────────────
+          # create_regression_users() deletes auth.users, which cascades to
+          # public.profiles. check_ins.user_id → profiles.id is RESTRICT (not
+          # CASCADE), so any check_ins/passports left by a prior CI run must be
+          # deleted BEFORE create_regression_users runs or the auth.users DELETE
+          # fails with 23503.  service_role bypassrls makes this safe.
+          print("\n── Step 0: pre-clean child rows for regression users ──────────")
+          REG_P1 = 'bbbbbbbb-0001-0000-0000-000000000000'
+          REG_P2 = 'bbbbbbbb-0002-0000-0000-000000000000'
+          uf = f"{REG_P1},{REG_P2}"
+          DEL_H = {**SVC_H, "Prefer": "return=minimal"}
+          r = httpx.delete(f"{REST}/check_ins?user_id=in.({uf})", headers=DEL_H, timeout=15)
+          print(f"  pre-clean check_ins: HTTP {r.status_code}")
+          r = httpx.delete(f"{REST}/passports?user_id=in.({uf})", headers=DEL_H, timeout=15)
+          print(f"  pre-clean passports: HTTP {r.status_code}")
+
           # ── Step 1: Create regression users (SECURITY DEFINER, no GoTrue) ─────
           # create_regression_users inserts reg_player_one + reg_player_two
           # directly into auth.users with deterministic UUIDs and NULL fix.
