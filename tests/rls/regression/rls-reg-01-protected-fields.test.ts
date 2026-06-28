@@ -65,12 +65,23 @@ describe("REG-1 Protected fields — profiles", () => {
       { is_admin: true },
       anonHeaders()
     );
+    // PostgREST returns 403 when a WITH CHECK clause explicitly denies the write.
+    // When no UPDATE policy exists for anon, RLS silently filters all rows to 0
+    // and PostgREST returns 204 (no rows affected) — still a secure outcome.
     expect(
       res.status,
-      `${accessResult(res.status)}: anon escalated all profile rows to admin. ` +
+      `${accessResult(res.status)}: anon escalated profile rows to admin. ` +
       `profiles_update_own is missing or its WITH CHECK allows anon writes. ` +
       `Fix: apply migration 005 and verify 'profiles_update_own' in pg_policies.`
-    ).toSatisfy((s: number) => s === 401 || s === 403);
+    ).toSatisfy((s: number) => s === 401 || s === 403 || s === 204);
+
+    // Ground truth: even if PostgREST returned 204, verify p1's is_admin was not set.
+    const p1Admin = await svcRead<boolean>("profiles", `id=eq.${p1Id}`, "is_admin");
+    expect(
+      p1Admin,
+      `CRITICAL: is_admin = true after anon PATCH. The anon update was applied. ` +
+      `Apply migration 005 immediately.`
+    ).toBe(false);
   });
 
   // ── REG-1b: Authenticated user cannot set own is_admin to true ───────────────
@@ -119,12 +130,23 @@ describe("REG-1 Protected fields — profiles", () => {
       { full_name: "Hijacked" },
       authedHeaders(p1JWT)  // p1 trying to write p2's row
     );
+    // PostgREST returns 403 on WITH CHECK failure; 204 (no rows affected) when the
+    // USING clause filters out p2's row (profiles_update_own USING(auth.uid()=id)
+    // means p1 sees 0 rows when targeting p2's id). Both outcomes are correct.
     expect(
       res.status,
       `${accessResult(res.status)}: p1 wrote to p2's profile row. ` +
       `profiles_update_own USING clause must be auth.uid()=id. ` +
       `Run: SELECT qual FROM pg_policies WHERE policyname='profiles_update_own';`
-    ).toSatisfy((s: number) => s === 401 || s === 403 || s === 404);
+    ).toSatisfy((s: number) => s === 401 || s === 403 || s === 404 || s === 204);
+
+    // Ground truth: verify p2's full_name was not actually modified.
+    const p2Name = await svcRead<string>("profiles", `id=eq.${p2Id}`, "full_name");
+    expect(
+      p2Name,
+      `EXPLOIT: p2's full_name was changed to "Hijacked" by p1. ` +
+      `profiles_update_own USING(auth.uid()=id) must prevent cross-user writes.`
+    ).not.toBe("Hijacked");
   });
 
   // ── REG-1d: referral_code cannot be overwritten once set ─────────────────────
