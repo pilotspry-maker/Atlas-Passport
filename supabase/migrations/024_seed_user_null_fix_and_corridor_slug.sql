@@ -86,7 +86,7 @@ BEGIN
     '{"provider":"email","providers":["email"]}'::jsonb, '{}'::jsonb,
     v_now, v_now, false, false, NULL,
     '', '', '', '', '', '',
-    NULL, '', NULL
+    NULL, '', ''
   ),
   (
     P2_ID,
@@ -97,12 +97,15 @@ BEGIN
     '{"is_admin":true}'::jsonb,
     v_now, v_now, false, false, NULL,
     '', '', '', '', '', '',
-    NULL, '', NULL
+    NULL, '', ''
   );
 
   -- Dynamic comprehensive NULL fix for every nullable text/varchar on auth.users.
-  -- Skips phone and phone_change so empty-string does not collide on the
-  -- unique-on-empty-string constraint GoTrue maintains for those columns.
+  -- Only phone is skipped because it carries a real UNIQUE constraint; setting
+  -- it to '' would collide across multiple rows. phone_change has NO unique
+  -- constraint, so it MUST be set to '' or GoTrue's list-users scan blows up
+  -- with: sql: Scan error on column index 22, name "phone_change":
+  -- converting NULL to string is unsupported.
   FOR v_col IN
     SELECT column_name
     FROM information_schema.columns
@@ -110,7 +113,7 @@ BEGIN
       AND table_name   = 'users'
       AND data_type IN ('character varying', 'text')
       AND is_nullable  = 'YES'
-      AND column_name NOT IN ('phone', 'phone_change')
+      AND column_name <> 'phone'
     ORDER BY ordinal_position
   LOOP
     BEGIN
@@ -200,7 +203,7 @@ BEGIN
     '{"full_name":"Regression Player One"}'::jsonb,
     v_now, v_now, false, false, NULL,
     '', '', '', '', '', '',
-    NULL, '', NULL
+    NULL, '', ''
   ),
   (
     P2_ID,
@@ -211,7 +214,7 @@ BEGIN
     '{"full_name":"Regression Player Two"}'::jsonb,
     v_now, v_now, false, false, NULL,
     '', '', '', '', '', '',
-    NULL, '', NULL
+    NULL, '', ''
   );
 
   FOR v_col IN
@@ -221,7 +224,7 @@ BEGIN
       AND table_name   = 'users'
       AND data_type IN ('character varying', 'text')
       AND is_nullable  = 'YES'
-      AND column_name NOT IN ('phone', 'phone_change')
+      AND column_name <> 'phone'
     ORDER BY ordinal_position
   LOOP
     BEGIN
@@ -352,7 +355,7 @@ BEGIN
     'corridor_active_id', CORRIDOR_ACTIVE_ID,
     'passport_active_id', PASSPORT_ACTIVE_ID,
     'checkin_id',         CHECKIN_SEED_ID,
-    'migration',          '024b'
+    'migration',          '024c'
   );
 END;
 $$;
@@ -364,7 +367,7 @@ GRANT  EXECUTE ON FUNCTION public.seed_regression_passports() TO service_role;
 
 DO $$
 BEGIN
-  RAISE NOTICE '[024] create_test_users + create_regression_users: dynamic NULL fix added';
-  RAISE NOTICE '[024b] seed_regression_passports: Clean slate + PASSPORT_OTHER on CORRIDOR_INACTIVE_ID';
+  RAISE NOTICE '[024c] create_test_users + create_regression_users: NULL fix now covers phone_change (only phone is skipped for unique constraint)';
+  RAISE NOTICE '[024c] seed_regression_passports: Clean slate + PASSPORT_OTHER on CORRIDOR_INACTIVE_ID';
 END;
 $$;
