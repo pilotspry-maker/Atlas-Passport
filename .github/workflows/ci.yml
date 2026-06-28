@@ -218,19 +218,29 @@ jobs:
       #   d) signIn → seed passports + check-in via each player's own JWT
       - name: Seed RLS test fixtures
         env:
-          SUPABASE_URL:      ${{ secrets.NEXT_PUBLIC_SUPABASE_URL }}
-          SUPABASE_ANON_KEY: ${{ secrets.NEXT_PUBLIC_SUPABASE_ANON_KEY }}
+          SUPABASE_URL:              ${{ secrets.NEXT_PUBLIC_SUPABASE_URL }}
+          SUPABASE_ANON_KEY:         ${{ secrets.NEXT_PUBLIC_SUPABASE_ANON_KEY }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
         run: |
           python3 << 'EOF'
           import os, time, json, base64, httpx
 
           URL      = os.environ["SUPABASE_URL"].rstrip("/")
           ANON_KEY = os.environ["SUPABASE_ANON_KEY"]
+          SVC_KEY  = os.environ["SUPABASE_SERVICE_ROLE_KEY"]
           REST     = f"{URL}/rest/v1"
           AUTH     = f"{URL}/auth/v1"
 
           ANON_HEADERS = {
               "apikey": ANON_KEY,
+              "Content-Type": "application/json",
+          }
+
+          # Seed RPCs (create_test_users, seed_ci_fixtures, seed_ci_fixtures_v2)
+          # were locked to service_role by migration 017. Anon cannot call them.
+          SVC_HEADERS = {
+              "apikey": SVC_KEY,
+              "Authorization": f"Bearer {SVC_KEY}",
               "Content-Type": "application/json",
           }
 
@@ -241,7 +251,7 @@ jobs:
           NODE_ID              = "bbbbbbbb-0000-0000-0000-000000000001"
 
           def rpc(fn, args=None, fatal=True):
-              r = httpx.post(f"{REST}/rpc/{fn}", headers=ANON_HEADERS,
+              r = httpx.post(f"{REST}/rpc/{fn}", headers=SVC_HEADERS,
                              json=args or {}, timeout=30)
               if not r.is_success:
                   msg = f"  [rpc] {fn}: {r.status_code} {r.text}"

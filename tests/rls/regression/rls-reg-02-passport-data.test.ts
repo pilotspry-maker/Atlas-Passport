@@ -318,14 +318,16 @@ describe("REG-2 Cross-user SELECT isolation", () => {
     ).toHaveLength(0);
   });
 
-  // ── REG-2m: Public tables are readable by anon (corridors, nodes) ────────────
-  it("REG-2m: anon can read active corridors — public read policy is intact", async () => {
-    const res = await pgGet("corridors", "select=id,is_active&is_active=eq.true&limit=10", anonHeaders());
+  // ── REG-2m: Corridors readable by authenticated players ──────────────────────
+  // corridors_select_active is scoped TO authenticated (not public/anon).
+  // Anon reads correctly return [] — this tests the authenticated read path.
+  it("REG-2m: authenticated player can read active corridors — corridors_select_active enforced", async () => {
+    const res = await pgGet("corridors", "select=id,is_active&is_active=eq.true&limit=10", authedHeaders(p1JWT));
     expect(res.status).toBe(200);
     const rows = await res.json() as { is_active: boolean }[];
-    // Must return at least one active corridor (the regression fixture)
+    // Must return at least one active corridor (the live DB corridors or the regression fixture)
     expect(rows.length).toBeGreaterThanOrEqual(1);
-    // Every returned row must have is_active=true
+    // Every returned row must have is_active=true (policy USING guard)
     expect(rows.every((r) => r.is_active === true)).toBe(true);
   });
 });

@@ -152,18 +152,20 @@ export async function setup(): Promise<void> {
   await svcUpsert("corridors", {
     id: REG.CORRIDOR_ACTIVE_ID,
     name: "Regression Corridor Active",
+    slug: "reg-corridor-active",
+    city: "Test City",
+    country: "US",
     description: "Regression test corridor",
     is_active: true,
-    start_date: new Date().toISOString(),
-    end_date: new Date(Date.now() + 86400000 * 90).toISOString(),
   });
   await svcUpsert("corridors", {
     id: REG.CORRIDOR_INACTIVE_ID,
     name: "Regression Corridor Inactive",
+    slug: "reg-corridor-inactive",
+    city: "Test City",
+    country: "US",
     description: "Inactive — regression test only",
     is_active: false,
-    start_date: new Date(Date.now() - 86400000 * 2).toISOString(),
-    end_date: new Date(Date.now() - 86400000).toISOString(),
   });
 
   // ── Step 3: Seed node ─────────────────────────────────────────────────────────
@@ -172,9 +174,7 @@ export async function setup(): Promise<void> {
     id: REG.NODE_ID,
     corridor_id: REG.CORRIDOR_ACTIVE_ID,
     name: "Regression Node",
-    location_name: "Test Location",
-    latitude: 38.9,
-    longitude: -77.0,
+    sequence: 1,
     is_active: true,
   });
 
@@ -183,10 +183,9 @@ export async function setup(): Promise<void> {
   await svcUpsert("rewards", {
     id: REG.REWARD_ID,
     corridor_id: REG.CORRIDOR_ACTIVE_ID,
-    name: "Regression Reward",
+    title: "Regression Reward",
     description: "Regression test reward",
     redemption_code: "REG-TEST-001",
-    claimed: false,
   });
 
   // ── Step 5: Seed passports via each player's own JWT ─────────────────────────

@@ -51,7 +51,7 @@ describe("REG-3 Reward immutability and access control", () => {
 
   // ── REG-3a: Anon cannot read rewards ─────────────────────────────────────────
   it("REG-3a: anon SELECT on rewards returns [] — no data leakage", async () => {
-    const res = await pgGet("rewards", "select=id,name,redemption_code&limit=5", anonHeaders());
+    const res = await pgGet("rewards", "select=id,title,redemption_code&limit=5", anonHeaders());
     expect(res.status).toBe(200);
     const rows = await res.json() as unknown[];
     expect(
@@ -204,10 +204,9 @@ describe("REG-3 Reward immutability and access control", () => {
       {
         id: fakeRewardId,
         corridor_id: REG.CORRIDOR_ACTIVE_ID,
-        name: "Self-Created Reward",
+        title: "Self-Created Reward",
         description: "Fraudulent reward",
         redemption_code: "FREE-STUFF",
-        claimed: false,
       },
       authedHeaders(p1JWT)
     );
