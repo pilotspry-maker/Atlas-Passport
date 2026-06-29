@@ -22,17 +22,21 @@
 --
 -- IDEMPOTENT: DROP POLICY IF EXISTS before each CREATE.
 --
--- check_ins NOTE (see PR description "Open question resolution"):
---   The live "Travelers read own checkins" SELECT policy gates on
---   check_ins.traveler_id. The repo's check_ins (001_initial_schema.sql) is
---   keyed on user_id and NO migration adds a traveler_id column; CLAUDE.md §13
---   forbids restructuring check_ins. Recreating this policy on a non-existent
---   traveler_id column would fail the fresh-DB CI bootstrap. The current,
---   advisor-clean check_ins ownership policies are check_ins_select_own /
---   check_ins_insert_own (migrations 004/005, on user_id). The legacy
---   "Travelers read own checkins" policy is therefore DROPPED with no
---   replacement: a no-op on the fresh CI DB, and on live it removes a stale
---   TO public policy with no loss of coverage.
+-- SCOPE — 15 policies rescoped TO authenticated (was 11):
+--   • 11 "Travelers *" policies on the Orion tables (baselined in 032), INCLUDING
+--     check_ins."Travelers read own checkins" which gates on check_ins.traveler_id.
+--     Live verification confirmed traveler_id DOES exist on live's check_ins
+--     (real drift); 032 now baselines that column, so this policy is rescoped
+--     (NOT dropped, as in the first revision of this PR).
+--   • 4 repo-owned SELECT policies that were defined TO public in migration 001
+--     and never rescoped: check_ins_select_own (user_id = auth.uid()),
+--     passports_select_own (user_id = auth.uid()), profiles_select_own
+--     (auth.uid() = id). Their USING clauses are preserved byte-for-byte with
+--     auth.uid() wrapped as (select auth.uid()).
+--
+--   The 2 "Service inserts *" policies (ap_events, referral_events) are NOT
+--   touched (separate advisor track). check_ins."Travelers insert own checkins"
+--   is NOT touched — migration 031 already rescoped it TO authenticated.
 -- ════════════════════════════════════════════════════════════════════════════
 
 BEGIN;
@@ -92,10 +96,31 @@ CREATE POLICY "Travelers read own referrals" ON public.referral_events
   FOR SELECT TO authenticated
   USING ((select auth.uid()) = referrer_id);
 
--- ── check_ins legacy SELECT — DROP only (see header note) ─────────────────────
+-- ── check_ins legacy SELECT — rescope on baselined traveler_id ────────────────
+-- traveler_id IS present on live (real drift, baselined in 032). Rescope rather
+-- than drop (reverses the first revision of this PR).
 DROP POLICY IF EXISTS "Travelers read own checkins" ON public.check_ins;
+CREATE POLICY "Travelers read own checkins" ON public.check_ins
+  FOR SELECT TO authenticated
+  USING ((select auth.uid()) = traveler_id);
 
--- ── Verification: no "Travelers%" policy remains scoped TO public ─────────────
+-- ── repo-owned SELECT policies missed in 001/002 (still TO public) ────────────
+DROP POLICY IF EXISTS "check_ins_select_own" ON public.check_ins;
+CREATE POLICY "check_ins_select_own" ON public.check_ins
+  FOR SELECT TO authenticated
+  USING (user_id = (select auth.uid()));
+
+DROP POLICY IF EXISTS "passports_select_own" ON public.passports;
+CREATE POLICY "passports_select_own" ON public.passports
+  FOR SELECT TO authenticated
+  USING (user_id = (select auth.uid()));
+
+DROP POLICY IF EXISTS "profiles_select_own" ON public.profiles;
+CREATE POLICY "profiles_select_own" ON public.profiles
+  FOR SELECT TO authenticated
+  USING ((select auth.uid()) = id);
+
+-- ── Verification: none of the 15 rescoped policies remain scoped TO public ────
 DO $$
 DECLARE
   bad_count integer;
@@ -103,10 +128,18 @@ BEGIN
   SELECT count(*) INTO bad_count
   FROM pg_policies
   WHERE schemaname = 'public'
-    AND policyname LIKE 'Travelers%'
+    AND policyname IN (
+      'Travelers read own ap events',
+      'Travelers insert own progress','Travelers read own progress','Travelers update own progress',
+      'Travelers insert own activations','Travelers read own activations',
+      'Travelers read own referrals',
+      'Travelers insert own profile','Travelers read own profile','Travelers update own profile',
+      'Travelers read own checkins',
+      'check_ins_select_own','passports_select_own','profiles_select_own'
+    )
     AND 'public' = ANY(roles);
   IF bad_count > 0 THEN
-    RAISE EXCEPTION '[033] VERIFICATION FAILED: % Travelers policies still scoped TO public', bad_count;
+    RAISE EXCEPTION '[033] VERIFICATION FAILED: % policies still scoped TO public', bad_count;
   END IF;
 END $$;
 

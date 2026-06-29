@@ -94,6 +94,15 @@ CREATE TABLE IF NOT EXISTS public.referral_events (
 );
 ALTER TABLE public.referral_events ENABLE ROW LEVEL SECURITY;
 
+-- ── Drift baseline: check_ins.traveler_id ────────────────────────────────────
+-- Live's public.check_ins has a `traveler_id` column that was added out-of-band
+-- and never landed in repo (confirmed via live information_schema.columns:
+-- traveler_id uuid NULL). Baseline it so CI bootstrap-from-zero matches live
+-- exactly. Nullable uuid, no FK (live has none on this column). The legacy
+-- "Travelers read own checkins" SELECT policy (rescoped in 033) gates on it.
+ALTER TABLE public.check_ins
+  ADD COLUMN IF NOT EXISTS traveler_id uuid;
+
 -- ── Policies (baseline — TO public, bare auth.uid(), exactly as live) ─────────
 
 -- traveler_profiles
@@ -176,6 +185,15 @@ BEGIN
       RAISE EXCEPTION '[032] VERIFICATION FAILED: RLS not enabled on public.%', t;
     END IF;
   END LOOP;
+
+  IF NOT EXISTS (
+    SELECT 1 FROM information_schema.columns
+    WHERE table_schema = 'public'
+      AND table_name = 'check_ins'
+      AND column_name = 'traveler_id'
+  ) THEN
+    RAISE EXCEPTION '[032] VERIFICATION FAILED: public.check_ins.traveler_id column missing';
+  END IF;
 END $$;
 
 COMMIT;
