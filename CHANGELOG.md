@@ -4,6 +4,19 @@ All notable changes to Atlas Passport.
 
 ## [Unreleased]
 
+### Added — Orion schema baseline + Travelers policy rescope (branch `chore/orion-schema-baseline-and-rescope`)
+
+- **032 `orion_schema_baseline`**: Baselines the 5 live-only "Orion" tables into repo migration history so CI's bootstrap-from-zero (`supabase db push --local`) matches live: `traveler_profiles` (PK FK → `auth.users(id) ON DELETE CASCADE`, per CLAUDE.md §12), `passport_activations`, `mission_progress` (composite PK), `ap_events`, `referral_events`. Enables RLS on each and recreates the 12 existing policies **exactly as live** — `TO public` with bare `auth.uid()`, including the 2 `Service inserts *` policies (`WITH CHECK (true)`). `CREATE TABLE IF NOT EXISTS` + `DROP POLICY IF EXISTS` make it a no-op when applied to live. Ends with a verification DO block asserting all 5 tables exist with `rowsecurity = true`.
+- **033 `rescope_legacy_travelers_policies`**: Drops + recreates the 11 `Travelers *` policies `TO authenticated` with `(select auth.uid())` (fixes the `auth_rls_initplan` advisor and the overly-broad `public` role). The 2 `Service inserts *` policies are left untouched (separate advisor findings). The legacy `check_ins."Travelers read own checkins"` policy is **dropped with no replacement**: repo `check_ins` is keyed on `user_id` (001) with no `traveler_id` column, so recreating on `traveler_id` would break the fresh-DB bootstrap; current ownership is covered by `check_ins_select_own`/`check_ins_insert_own`. Ends with a verification DO block that raises if any `Travelers%` policy still has `public` in its roles.
+
+### DOWN path (032–033)
+
+```sql
+-- 033: restore prior TO public policies (or re-run 032's policy block).
+-- 032: DROP the 5 Orion tables only on a non-live DB; on live they pre-exist and must NOT be dropped.
+-- No data is destroyed by either migration when applied to live (both are no-ops there).
+```
+
 ### Fixed — Task 1: Idempotent seed RPCs (PR #40)
 
 - **020 `idempotent_seed_helpers`**: Redeploys `create_exploit_test_users`, `seed_ci_passports`, and `seed_regression_passports` with Clean-slate DELETE blocks + `ON CONFLICT (id) DO UPDATE` on `public.profiles` so the `handle_new_user` trigger not firing can never break the seed. Fixes migration-registry drift between live DB and repo.
