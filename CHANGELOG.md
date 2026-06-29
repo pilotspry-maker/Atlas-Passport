@@ -10,7 +10,7 @@ All notable changes to Atlas Passport.
 
 ### Performance/Security — Task 6: Wrap bare auth.uid() in (select auth.uid()) (branch `claude/atlas-passport-mvp-hw9hmr`)
 
-- **036 `wrap_auth_uid_initplan`**: Fixes the `auth_rls_initplan` Supabase advisor finding on 5 remaining policies not already addressed by migrations 031/033. Rewrites `profiles_update_own` (USING + WITH CHECK + nested WHERE), `passports_insert_own` (WITH CHECK), and the three `check_in_proofs_*` storage.objects policies to use `(select auth.uid())` so Postgres can cache the session UID as a startup initplan instead of re-evaluating it per row. Also updates `check_ins_player_view` WHERE clause for consistency. Behaviorally identical — no access rules changed.
+- **036 `wrap_auth_uid_initplan`**: Fixes the `auth_rls_initplan` Supabase advisor finding on 5 remaining policies not already addressed by migrations 031/033. Also fixes the HTTP 500 recursion bug (PR #46 root cause): migration 005's `profiles_update_own` WITH CHECK contained `SELECT is_admin FROM profiles WHERE id = auth.uid()`, which after migration 033 wrapped `profiles_select_own`'s USING in `(select auth.uid())`, triggered infinite RLS recursion and PostgREST 500. Fix: adds `committed_is_admin(uuid)` SECURITY DEFINER STABLE function (search_path='', exposed to authenticated only) that reads `is_admin` bypassing RLS; rewrites `profiles_update_own` to call it. Also wraps `passports_insert_own` (WITH CHECK) and the three `check_in_proofs_*` storage.objects policies; updates `check_ins_player_view` WHERE clause. Supersedes PR #46.
 
 ### Security — Task 4: Restrict corridor-covers storage bucket (branch `claude/atlas-passport-mvp-hw9hmr`)
 

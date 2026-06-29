@@ -13,11 +13,18 @@
 --   Migration 033 fixed 15 policies. This migration closes the remaining gaps
 --   not yet touched by an earlier migration.
 --
+-- FUNCTION ADDED (1):
+--   public.committed_is_admin(uuid) — SECURITY DEFINER, STABLE, search_path=''.
+--   Reads committed is_admin for a user bypassing RLS. Required by the
+--   profiles_update_own WITH CHECK to avoid recursive policy evaluation that
+--   causes HTTP 500 (PR #46 root-cause analysis). Exposed to authenticated only.
+--
 -- POLICIES REWRITTEN (5):
 --
 --   public.profiles — profiles_update_own (last defined in 005)
 --     USING:      auth.uid() = id
---     WITH CHECK: auth.uid() = id AND is_admin = (SELECT ... WHERE id = auth.uid())
+--     WITH CHECK: auth.uid() = id AND is_admin = committed_is_admin(auth.uid())
+--     (replaces inline SELECT subquery that recursed through profiles_select_own)
 --
 --   public.passports — passports_insert_own (last defined in 007)
 --     WITH CHECK: user_id = auth.uid() AND EXISTS (...)
@@ -53,7 +60,37 @@
 BEGIN;
 
 -- ── 1. profiles — profiles_update_own ────────────────────────────────────────
--- Preserves the is_admin column freeze from migration 005 exactly.
+--
+-- RECURSION FIX (discovered in PR #46 post-migration 033):
+--   Migration 005's WITH CHECK subquery `SELECT is_admin FROM profiles WHERE
+--   id = auth.uid()` is filtered by profiles_select_own. After migration 033
+--   wrapped profiles_select_own's USING in (select auth.uid()), Postgres
+--   detects "infinite recursion in policy for relation profiles" and PostgREST
+--   returns HTTP 500 instead of 403.
+--
+--   Fix: replace the inline subquery with a SECURITY DEFINER helper function
+--   `committed_is_admin(uuid)` that reads profiles while bypassing RLS. This
+--   is the canonical Postgres pattern for policies that must read their own table.
+
+CREATE OR REPLACE FUNCTION public.committed_is_admin(p_user_id uuid)
+RETURNS boolean
+LANGUAGE sql
+STABLE
+SECURITY DEFINER
+SET search_path = ''
+AS $$
+  SELECT is_admin
+  FROM   public.profiles
+  WHERE  id = p_user_id
+$$;
+
+REVOKE ALL  ON FUNCTION public.committed_is_admin(uuid) FROM PUBLIC;
+GRANT  EXECUTE ON FUNCTION public.committed_is_admin(uuid) TO authenticated;
+
+COMMENT ON FUNCTION public.committed_is_admin(uuid) IS
+  'SECURITY DEFINER helper used by profiles_update_own WITH CHECK. '
+  'Reads committed is_admin bypassing RLS to prevent recursive policy '
+  'evaluation (PostgREST HTTP 500 → 403).';
 
 DROP POLICY IF EXISTS "profiles_update_own" ON public.profiles;
 
@@ -63,11 +100,7 @@ CREATE POLICY "profiles_update_own" ON public.profiles
   USING ((select auth.uid()) = id)
   WITH CHECK (
     (select auth.uid()) = id
-    AND is_admin = (
-      SELECT is_admin
-      FROM   public.profiles
-      WHERE  id = (select auth.uid())
-    )
+    AND is_admin = public.committed_is_admin((select auth.uid()))
   );
 
 
@@ -159,8 +192,28 @@ GRANT SELECT ON public.check_ins_player_view TO authenticated;
 DO $$
 DECLARE
   bare_count integer;
+  chk_clause text;
 BEGIN
-  -- Check that the rewritten policies no longer have bare auth.uid() in qual
+  -- 1. committed_is_admin() helper must exist
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_proc p
+    JOIN pg_namespace n ON n.oid = p.pronamespace
+    WHERE n.nspname = 'public' AND p.proname = 'committed_is_admin'
+  ) THEN
+    RAISE EXCEPTION '[036] VERIFICATION FAILED: committed_is_admin() function not found';
+  END IF;
+
+  -- 2. profiles_update_own WITH CHECK must reference committed_is_admin
+  SELECT with_check::text INTO chk_clause
+    FROM pg_policies
+   WHERE schemaname = 'public' AND tablename = 'profiles'
+     AND policyname = 'profiles_update_own';
+
+  IF chk_clause IS NULL OR chk_clause NOT LIKE '%committed_is_admin%' THEN
+    RAISE EXCEPTION '[036] VERIFICATION FAILED: profiles_update_own does not use committed_is_admin(). Got: %', chk_clause;
+  END IF;
+
+  -- 3. No rewritten policy should still have bare auth.uid()
   SELECT COUNT(*) INTO bare_count
     FROM pg_policies
    WHERE schemaname IN ('public', 'storage')
@@ -173,17 +226,19 @@ BEGIN
      )
      AND (
        (qual       IS NOT NULL AND qual       LIKE '%auth.uid()%'
-                                AND qual       NOT LIKE '%(select auth.uid())%')
+                                AND qual       NOT LIKE '%(select auth.uid())%'
+                                AND qual       NOT LIKE '%committed_is_admin%')
        OR
        (with_check IS NOT NULL AND with_check LIKE '%auth.uid()%'
-                                AND with_check NOT LIKE '%(select auth.uid())%')
+                                AND with_check NOT LIKE '%(select auth.uid())%'
+                                AND with_check NOT LIKE '%committed_is_admin%')
      );
 
   IF bare_count > 0 THEN
     RAISE EXCEPTION '[036] VERIFICATION FAILED: % policy/ies still contain bare auth.uid()', bare_count;
   END IF;
 
-  RAISE NOTICE '[036] OK: 5 policies wrapped with (select auth.uid()); check_ins_player_view updated';
+  RAISE NOTICE '[036] OK: committed_is_admin() created; 5 policies wrapped; check_ins_player_view updated';
 END $$;
 
 COMMIT;
