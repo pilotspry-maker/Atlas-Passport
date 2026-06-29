@@ -232,13 +232,14 @@ BEGIN
        'check_in_proofs_delete_own'
      )
      AND (
+       -- PostgreSQL stores (select auth.uid()) as (SELECT auth.uid()) — use ILIKE
        (qual       IS NOT NULL AND qual       LIKE '%auth.uid()%'
-                                AND qual       NOT LIKE '%(select auth.uid())%'
-                                AND qual       NOT LIKE '%committed_is_admin%')
+                                AND qual       NOT ILIKE '%(select auth.uid())%'
+                                AND qual       NOT ILIKE '%committed_is_admin%')
        OR
        (with_check IS NOT NULL AND with_check LIKE '%auth.uid()%'
-                                AND with_check NOT LIKE '%(select auth.uid())%'
-                                AND with_check NOT LIKE '%committed_is_admin%')
+                                AND with_check NOT ILIKE '%(select auth.uid())%'
+                                AND with_check NOT ILIKE '%committed_is_admin%')
      );
 
   IF bare_count > 0 THEN
