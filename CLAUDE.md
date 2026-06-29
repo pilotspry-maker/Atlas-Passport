@@ -1,9 +1,9 @@
 # Atlas Passport — Operating Manual for Claude
 
-> **Last updated:** 2026-06-27 — post-launch refresh. Adds launch status, Coworker host duty, Orion-in-Supabase contract, and the launch-window operational infrastructure (hourly monitor + GitHub critical escalation hook + weekday morning env check).
-> **Previous revision:** 2026-06-25 (RLS + dependency audit findings).
-> **Active security branch:** `fix/005-rls-exploit-patches` ([PR #18](https://github.com/pilotspry-maker/Atlas-Passport/pull/18))
-> **Status:** PR #18 is the working branch. Do not branch off `main` until #18 is merged.
+> **Last updated:** 2026-06-29 — PR #18 and PR #40 both merged to main. RESEND_API_KEY rotation in progress (see §14). 19 open PRs pending reconciliation.
+> **Previous revision:** 2026-06-27 (post-launch refresh).
+> **Active security branch:** none — `fix/005-rls-exploit-patches` (PR #18) and `fix/seed-rpc-idempotency-clean` (PR #40) both merged.
+> **Status:** main is the working branch. New work branches off main.
 
 Real-world travel activation game by Relevant Artist. Users collect stamped check-ins across city corridors within a 72-hour window.
 
@@ -452,28 +452,50 @@ Only grant `anon` or `authenticated` to a SECURITY DEFINER function if it is exp
 
 ## 14. Known Outstanding Work
 
+### 🔴 Security / Urgent
+
 | Item | Owner | Notes |
 |---|---|---|
-| Update GitHub Actions secret `SUPABASE_SERVICE_ROLE_KEY` | Operator | Stale value caused 2026-06-27 CI red. Paste current service_role JWT from Supabase dashboard, re-run failed workflow. |
-| Apply migrations 004 → 008 to production | Operator (manual SQL paste) | Combined file ready |
-| Re-run CI on PR #18 | Auto on push | Should pass once migrations + secret are live |
-| Merge PR #18 | Operator | Use `enforce_admins` bypass flow |
-| Add required status checks to `main` | Operator | GitHub → Settings → Branches |
-| Upgrade `next` to `^15.5.19` | Claude | Test RSC pages, auth callback, cron route |
-| Pin `ws` to `^8.21.0` | Claude | `package.json` overrides |
-| Upgrade `@supabase/ssr` to `^0.12.0` | Claude | Codebase already forward-compatible |
-| Enrich 14 DC corridor nodes | Operator | Sequence, address, hint, description, coordinates |
-| Verify Resend SPF + DKIM | Operator | Pre-launch gate |
-| PWA + Capacitor track | Branch `feat/pwa-ios-capacitor` | Resume after PR #18 merge |
-| DST flip on cron `84869e59` | Operator (late Oct 2026) | Change `5 11 * * 1-5` → `5 12 * * 1-5` when EST returns |
-| Decide whether to make `pilotspry@gmail.com` → `ramon@relevant-artist.com` cutover happen | Operator | Currently parked indefinitely |
+| **[ROTATION REQUIRED] `RESEND_API_KEY`** | Operator | Key prefix `re_JC6PSzFE_` exposed in chat session 2026-06-28 ~22:00 EDT. Steps: (1) revoke at resend.com/api-keys, (2) create `atlas-passport-prod-v2` (Sending access only), (3) `vercel env rm/add RESEND_API_KEY` × 3 environments, (4) `gh secret set RESEND_API_KEY --repo pilotspry-maker/Atlas-Passport` (also used in ci.yml build step), (5) `vercel --prod --yes` redeploy, (6) audit resend.com/emails for any sends under old key after leak time. |
+| Apply migrations 004 → 007 to production | Operator | Migrations 020–030 now in repo (PR #40 merged). Migrations 004, 005, 007 are still PENDING — RLS exploit patches not live until these are applied. Run sentinel probes after applying (see §6). |
+| Apply migration 030 to production | Operator | Enables REG-4 tests to fully assert (currently graceful-skip). `POST /rpc/get_public_rls_policies` should return 200. |
+
+### 🟡 CI / Infrastructure
+
+| Item | Owner | Notes |
+|---|---|---|
+| Reconcile 19 open PRs | Claude + Operator | PRs #21–#47 open; many are superseded by PR #40 merge or by each other. Task 8 of cleanup spec. |
+| Add required status checks to `main` | Operator | GitHub → Settings → Branches → require `RLS Exploit Tests (24 assertions)` + `Lint · Build · Bundle Size`. |
+| Upgrade `next` to `^15.5.19` | Claude | P1 — RCE + auth-bypass CVEs. Test RSC pages, auth callback, cron route. Task 2+ of upgrade track. |
+| Pin `ws` to `^8.21.0` | Claude | `package.json` overrides. |
+| Upgrade `@supabase/ssr` to `^0.12.0` | Claude | Codebase already forward-compatible. |
+
+### 🟢 Operational / Deferred
+
+| Item | Owner | Notes |
+|---|---|---|
+| Enrich 14 DC corridor nodes | Operator | Sequence, address, hint, description, coordinates. |
+| Verify Resend SPF + DKIM | Operator | Pre-public-launch gate. |
+| PWA + Capacitor track | Branch `feat/pwa-ios-capacitor` | Resume when sprint capacity allows. |
+| DST flip on cron `84869e59` | Operator (late Oct 2026) | Change `5 11 * * 1-5` → `5 12 * * 1-5` when EST returns. |
+| `pilotspry@gmail.com` → `ramon@relevant-artist.com` cutover | Operator | Parked indefinitely — do not propose. |
+
+### ✅ Completed (this sprint)
+
+| Item | PR | Date |
+|---|---|---|
+| Idempotent seed RPCs (migrations 020–030) | #40 | 2026-06-28 |
+| RLS exploit patches (migration 005) | #18 | merged to main |
+| Vitest 2.x JSON reporter key fix (`name` not `testFilePath`) | #40 | 2026-06-28 |
+| Regression test suite fixes (REG-1a/1c, REG-2m, REG-3a/3f, REG-4 pg_catalog) | #40 | 2026-06-28 |
+| CI pre-cleanup for regression user FK violations | #40 | 2026-06-28 |
 
 ---
 
 ## 15. References
 
 - Repo: https://github.com/pilotspry-maker/Atlas-Passport
-- Active PR: https://github.com/pilotspry-maker/Atlas-Passport/pull/18
+- Most recently merged PR: https://github.com/pilotspry-maker/Atlas-Passport/pull/40
 - Production app: https://atlas-passport.vercel.app
 - Supabase project: https://supabase.com/dashboard/project/gaavynmmysdhovpatzlp
 - Branch protection: https://github.com/pilotspry-maker/Atlas-Passport/settings/branches
