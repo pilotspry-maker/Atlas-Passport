@@ -2,6 +2,7 @@
 
 import { useState } from 'react'
 import { createClient } from '@/lib/supabase/client'
+import { formatAuthError } from '@/lib/auth-errors'
 
 interface Props {
   redirectTo?: string
@@ -39,22 +40,9 @@ export default function MagicLinkForm({ redirectTo }: Props) {
       })
 
       if (authError) {
-        // Translate low-level network errors into user-readable messages
-        const msg = authError.message
-        if (
-          msg === 'Load failed' ||
-          msg === 'Failed to fetch' ||
-          msg.includes('NetworkError') ||
-          msg.includes('fetch')
-        ) {
-          setError('Connection error — please check your internet and try again.')
-        } else if (msg.includes('rate limit') || msg.includes('too many')) {
-          setError('Too many attempts. Please wait a minute before trying again.')
-        } else if (msg.includes('not allowed') || msg.includes('invalid')) {
-          setError(`Sign-in failed: ${msg}`)
-        } else {
-          setError(msg || 'Something went wrong. Please try again.')
-        }
+        // Centralised translation — see src/lib/auth-errors.ts. Also handles
+        // `weak_password` / `pwned` for any future password-based flow.
+        setError(formatAuthError(authError).message)
         return
       }
 
