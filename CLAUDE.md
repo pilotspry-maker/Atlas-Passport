@@ -1,6 +1,6 @@
 # Atlas Passport — Operating Manual for Claude
 
-> **Last updated:** 2026-06-27 — post-launch refresh. Adds launch status, Coworker host duty, Orion-in-Supabase contract, and the launch-window operational infrastructure (hourly monitor + GitHub critical escalation hook + weekday morning env check).
+> **Last updated:** 2026-06-29 — adds Section 11.5 (Cron Standards) pointing to `docs/ATLAS_CRON_STANDARDS.md` after the 2026-06-28 credential-prompt incident. Previous: 2026-06-27 post-launch refresh (launch status, Coworker host duty, Orion-in-Supabase contract, launch-window operational infrastructure).
 > **Previous revision:** 2026-06-25 (RLS + dependency audit findings).
 > **Active security branch:** `fix/005-rls-exploit-patches` ([PR #18](https://github.com/pilotspry-maker/Atlas-Passport/pull/18))
 > **Status:** PR #18 is the working branch. Do not branch off `main` until #18 is merged.
@@ -354,6 +354,19 @@ Claude's role: when the operator pastes the morning one-liner into TRIAGE mode, 
 
 - `public.dev_env_status` — append-only morning env-check feed. Read by the cloud cron. Claude may read this for triage context but should not write to it.
 
+### 11.5 Cron Standards (added 2026-06-29)
+
+**Before creating, editing, or reviewing any cron — Perplexity Computer scheduled task, Vercel cron, or GitHub workflow on a schedule — read [`docs/ATLAS_CRON_STANDARDS.md`](docs/ATLAS_CRON_STANDARDS.md).**
+
+One-page cheat sheet covering:
+- HARD RULES block every cron task body must include (no `request_credential`, no inline bearer tokens, mandatory "Auth-blocked checks" section)
+- GitHub-native authentication pattern: `api_credentials=["github"]` / `["vercel"]` / Supabase MCP — never inline `--token $VERCEL_TOKEN`
+- Mandatory high-alert skip-date integration (and the regex pattern watchdog crons use to read it from the source-of-truth cron)
+- Staging-before-main procedure using Vercel preview deployments per PR
+- PR checklist + known-cron table
+
+Full incident write-up and rationale: [`docs/CRON_NO_CREDENTIAL_PROMPT_GUARDRAIL.md`](docs/CRON_NO_CREDENTIAL_PROMPT_GUARDRAIL.md) and [issue #43](https://github.com/pilotspry-maker/Atlas-Passport/issues/43).
+
 ---
 
 ## 12. Orion — The State of Record
@@ -480,3 +493,5 @@ Only grant `anon` or `authenticated` to a SECURITY DEFINER function if it is exp
 - `atlas-critical` issues: https://github.com/pilotspry-maker/Atlas-Passport/issues?q=is%3Aissue+label%3Aatlas-critical
 - Companion audit summary: `AUDIT_SUMMARY.md` (in this handoff bundle)
 - Coworker unified prompt: paste it as the first message of any new Claude session (HOST + TRIAGE mode gates)
+- Cron standards cheat sheet: [`docs/ATLAS_CRON_STANDARDS.md`](docs/ATLAS_CRON_STANDARDS.md) — read before creating any new cron
+- Cron credential guardrail spec: [`docs/CRON_NO_CREDENTIAL_PROMPT_GUARDRAIL.md`](docs/CRON_NO_CREDENTIAL_PROMPT_GUARDRAIL.md)
