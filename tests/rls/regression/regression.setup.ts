@@ -124,9 +124,11 @@ async function signUpAndConfirm(email: string, password: string, fullName: strin
   }
   console.log(`  [reg setup] signUp ${email}: ok`);
 
-  // confirm
+  // confirm — confirm_test_users is SECURITY DEFINER / service_role-only
+  // (CLAUDE.md hard rule). Calling it with the anon key returns 42501
+  // (permission denied). Use the service-role key, matching exploit setup.ts.
   try {
-    await rpc("confirm_test_users", { user_email: email });
+    await rpc("confirm_test_users", { user_email: email }, true);
     console.log(`  [reg setup] confirm ${email}: ok`);
   } catch (e) {
     console.warn(`  [reg setup] WARN confirm_test_users: ${e} — user may already be confirmed`);
