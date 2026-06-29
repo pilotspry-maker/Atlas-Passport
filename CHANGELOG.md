@@ -4,6 +4,10 @@ All notable changes to Atlas Passport.
 
 ## [Unreleased]
 
+### Performance/Security — Task 6: Wrap bare auth.uid() in (select auth.uid()) (branch `claude/atlas-passport-mvp-hw9hmr`)
+
+- **036 `wrap_auth_uid_initplan`**: Fixes the `auth_rls_initplan` Supabase advisor finding on 5 remaining policies not already addressed by migrations 031/033. Rewrites `profiles_update_own` (USING + WITH CHECK + nested WHERE), `passports_insert_own` (WITH CHECK), and the three `check_in_proofs_*` storage.objects policies to use `(select auth.uid())` so Postgres can cache the session UID as a startup initplan instead of re-evaluating it per row. Also updates `check_ins_player_view` WHERE clause for consistency. Behaviorally identical — no access rules changed.
+
 ### Security — Task 4: Restrict corridor-covers storage bucket (branch `claude/atlas-passport-mvp-hw9hmr`)
 
 - **035 `restrict_corridor_covers_bucket`**: Sets `corridor-covers` bucket `public = FALSE` (disables CDN unauthenticated access and anonymous listing). Drops the open `corridor_covers_select_public` policy (no role restriction). Adds `corridor_covers_select_auth` (FOR SELECT TO authenticated) and `corridor_covers_insert_admin` (FOR INSERT TO authenticated, defence-in-depth alongside the admin route's service_role). The corridors page already gates on `if (!user) redirect('/auth/login')` and no unauthenticated page renders cover images, so the change has no user-facing impact.
