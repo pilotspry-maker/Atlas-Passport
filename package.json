@@ -18,7 +18,9 @@
     "test:rls-all": "npm run test:rls-exploits && npm run test:rls-regression",
     "test:rls-local": "bash scripts/test-rls-local.sh",
     "test:rls-local:all": "bash scripts/test-rls-local.sh --all",
-    "prepare": "if [ -d .git ]; then cp scripts/pre-commit-rls.sh .git/hooks/pre-commit && chmod +x .git/hooks/pre-commit; fi"
+    "prepare": "if [ -d .git ]; then cp scripts/pre-commit-rls.sh .git/hooks/pre-commit && chmod +x .git/hooks/pre-commit; fi",
+    "test:unit": "vitest run --config vitest.unit.config.ts",
+    "test:unit:watch": "vitest --config vitest.unit.config.ts"
   },
   "dependencies": {
     "@react-email/code-block": "^0.2.1",
