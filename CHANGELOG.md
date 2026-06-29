@@ -4,6 +4,10 @@ All notable changes to Atlas Passport.
 
 ## [Unreleased]
 
+### Security — Task 4: Restrict corridor-covers storage bucket (branch `claude/atlas-passport-mvp-hw9hmr`)
+
+- **035 `restrict_corridor_covers_bucket`**: Sets `corridor-covers` bucket `public = FALSE` (disables CDN unauthenticated access and anonymous listing). Drops the open `corridor_covers_select_public` policy (no role restriction). Adds `corridor_covers_select_auth` (FOR SELECT TO authenticated) and `corridor_covers_insert_admin` (FOR INSERT TO authenticated, defence-in-depth alongside the admin route's service_role). The corridors page already gates on `if (!user) redirect('/auth/login')` and no unauthenticated page renders cover images, so the change has no user-facing impact.
+
 ### Security — Task 2: Tighten Orion INSERT policies + baseline waitlist_entries (branch `claude/atlas-passport-mvp-hw9hmr`)
 
 - **034 `tighten_orion_insert_policies`**: Closes the unrestricted INSERT gap left deliberately open by migration 032. Drops `"Service inserts ap events"` and `"Service inserts referrals"` (`TO public WITH CHECK (true)`), which allowed any authenticated or anon user to inject arbitrary rows into `ap_events` (spoofed atlas-points) or `referral_events` (forged referral chains). `service_role` is BYPASSRLS — no replacement policy is needed for the worker layer. Baselines `public.waitlist_entries` (`CREATE TABLE IF NOT EXISTS`) — this table existed out-of-band in production (CLAUDE.md §12) but was absent from migration history. Adds an email-format CHECK constraint (`~* '^[^@\s]+@[^@\s]+\.[^@\s]+$'`, NOT VALID for live-data compatibility) and an INSERT policy scoped to `anon, authenticated` with the same regex in WITH CHECK. No SELECT policy for public — only service_role reads via BYPASSRLS. Verification DO block asserts zero INSERT policies for public/anon/authenticated on both Orion event tables and that RLS is enabled on waitlist_entries.
