@@ -11,6 +11,8 @@
     "start": "next start",
     "lint": "eslint src",
     "email": "email dev --dir emails --port 3001",
+    "test:unit": "vitest run --config vitest.unit.config.ts",
+    "test:unit:watch": "vitest --config vitest.unit.config.ts",
     "test:rls-exploits": "vitest run --config vitest.rls.config.ts",
     "test:rls-exploits:watch": "vitest --config vitest.rls.config.ts",
     "test:rls-regression": "vitest run --config vitest.regression.config.ts",
