@@ -4,6 +4,19 @@ All notable changes to Atlas Passport.
 
 ## [Unreleased]
 
+### Added — Orion schema baseline + Travelers policy rescope (branch `chore/orion-schema-baseline-and-rescope`)
+
+- **032 `orion_schema_baseline`**: Baselines the 5 live-only "Orion" tables into repo migration history so CI's bootstrap-from-zero (`supabase db push --local`) matches live: `traveler_profiles` (PK FK → `auth.users(id) ON DELETE CASCADE`, per CLAUDE.md §12), `passport_activations`, `mission_progress` (composite PK), `ap_events`, `referral_events`. Enables RLS on each and recreates the 12 existing policies **exactly as live** — `TO public` with bare `auth.uid()`, including the 2 `Service inserts *` policies (`WITH CHECK (true)`). Also baselines a drift column: `check_ins.traveler_id` (nullable uuid, no FK) — added out-of-band in live and confirmed present via live `information_schema`. `CREATE TABLE/COLUMN IF NOT EXISTS` + `DROP POLICY IF EXISTS` make it a no-op when applied to live. Ends with a verification DO block asserting all 5 tables exist with `rowsecurity = true` and that `check_ins.traveler_id` exists.
+- **033 `rescope_legacy_travelers_policies`**: Rescopes **15 policies** total from `TO public` → `TO authenticated` with `auth.uid()` wrapped as `(select auth.uid())` (fixes the `auth_rls_initplan` advisor + overly-broad `public` role): the 11 `Travelers *` policies (including `check_ins."Travelers read own checkins"`, gated on the now-baselined `traveler_id`) plus 4 repo-owned policies that were never rescoped — `check_ins_select_own`, `passports_select_own`, `profiles_select_own`. The 2 `Service inserts *` policies are left untouched (separate advisor track). Ends with a verification DO block that raises if any of the 15 named policies still has `public` in its roles.
+
+### DOWN path (032–033)
+
+```sql
+-- 033: restore prior TO public policies (or re-run 032's policy block).
+-- 032: DROP the 5 Orion tables / check_ins.traveler_id column only on a non-live DB; on live they pre-exist and must NOT be dropped.
+-- No data is destroyed by either migration when applied to live (both are no-ops there).
+```
+
 ### Fixed — RLS inventory repair + worker 406 loop (chore/fix-rls-and-worker-logs)
 
 - **031 `fix_rewards_policy_checkins_grant`**: Renames `rewards_select_auth`→`rewards_select_own` (REG-4a) keeping the complete-passport gate; re-scopes legacy `check_ins` policy "Travelers insert own checkins" from `TO public`→`TO authenticated` with the full owner+active gate (REG-4f); re-affirms `service_role`-only EXECUTE on `confirm_test_users(TEXT)`.
