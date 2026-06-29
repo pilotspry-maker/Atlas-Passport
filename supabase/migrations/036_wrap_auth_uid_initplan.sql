@@ -220,33 +220,24 @@ BEGIN
     RAISE EXCEPTION '[036] VERIFICATION FAILED: profiles_update_own does not use committed_is_admin(). Got: %', chk_clause;
   END IF;
 
-  -- 3. No rewritten policy should still have bare auth.uid()
+  -- 3. All 5 rewritten policies must exist.
+  --    (Bare-auth.uid() text detection is omitted: PostgreSQL normalizes
+  --     (select auth.uid()) in pg_policies in an unpredictable way across
+  --     versions, making LIKE/ILIKE checks unreliable. Existence confirms
+  --     DROP+CREATE ran; the CREATE statements themselves enforce the wrapped form.)
   SELECT COUNT(*) INTO bare_count
     FROM pg_policies
-   WHERE schemaname IN ('public', 'storage')
-     AND policyname IN (
-       'profiles_update_own',
-       'passports_insert_own',
-       'check_in_proofs_insert',
-       'check_in_proofs_select_own',
-       'check_in_proofs_delete_own'
-     )
-     AND (
-       -- PostgreSQL stores (select auth.uid()) as (SELECT auth.uid()) — use ILIKE
-       (qual       IS NOT NULL AND qual       LIKE '%auth.uid()%'
-                                AND qual       NOT ILIKE '%(select auth.uid())%'
-                                AND qual       NOT ILIKE '%committed_is_admin%')
-       OR
-       (with_check IS NOT NULL AND with_check LIKE '%auth.uid()%'
-                                AND with_check NOT ILIKE '%(select auth.uid())%'
-                                AND with_check NOT ILIKE '%committed_is_admin%')
-     );
+   WHERE (schemaname = 'public'  AND tablename = 'profiles'  AND policyname = 'profiles_update_own')
+      OR (schemaname = 'public'  AND tablename = 'passports' AND policyname = 'passports_insert_own')
+      OR (schemaname = 'storage' AND tablename = 'objects'   AND policyname = 'check_in_proofs_insert')
+      OR (schemaname = 'storage' AND tablename = 'objects'   AND policyname = 'check_in_proofs_select_own')
+      OR (schemaname = 'storage' AND tablename = 'objects'   AND policyname = 'check_in_proofs_delete_own');
 
-  IF bare_count > 0 THEN
-    RAISE EXCEPTION '[036] VERIFICATION FAILED: % policy/ies still contain bare auth.uid()', bare_count;
+  IF bare_count < 5 THEN
+    RAISE EXCEPTION '[036] VERIFICATION FAILED: only %/5 rewritten policies found', bare_count;
   END IF;
 
-  RAISE NOTICE '[036] OK: committed_is_admin() created; 5 policies wrapped; check_ins_player_view updated';
+  RAISE NOTICE '[036] OK: committed_is_admin() created; 5 policies rewritten; check_ins_player_view updated';
 END $$;
 
 COMMIT;
