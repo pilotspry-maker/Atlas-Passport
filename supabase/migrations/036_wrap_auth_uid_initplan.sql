@@ -163,8 +163,15 @@ CREATE POLICY "check_in_proofs_delete_own" ON storage.objects
 -- Views are not RLS policies, but the per-row re-evaluation applies equally.
 -- The view is SECURITY BARRIER to prevent filter-pushdown leakage; the
 -- ownership WHERE must remain the first evaluated predicate.
+--
+-- DROP first: CREATE OR REPLACE VIEW cannot reorder or rename existing columns.
+-- The live view may have a different column order (e.g. user_id before passport_id)
+-- depending on which earlier migration last defined it. CASCADE drops any
+-- dependent grants, which we re-establish immediately below.
 
-CREATE OR REPLACE VIEW public.check_ins_player_view
+DROP VIEW IF EXISTS public.check_ins_player_view CASCADE;
+
+CREATE VIEW public.check_ins_player_view
 WITH (security_barrier = true)
 AS
 SELECT
