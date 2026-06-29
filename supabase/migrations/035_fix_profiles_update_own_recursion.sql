@@ -68,7 +68,11 @@ comment on function public.current_user_is_admin() is
   'Returns the committed is_admin value for the calling auth.uid(). SECURITY DEFINER to avoid RLS re-entry when used inside profiles_update_own WITH CHECK. Safe: filter is auth.uid()-keyed, cannot return another user''s row.';
 
 revoke all on function public.current_user_is_admin() from public;
-grant execute on function public.current_user_is_admin() to anon, authenticated, service_role;
+revoke execute on function public.current_user_is_admin() from anon;
+grant execute on function public.current_user_is_admin() to authenticated, service_role;
+-- The function is only meaningful when called with a real auth.uid().
+-- Anon has no JWT and would always read null. Tighten exposure to avoid
+-- Supabase advisor 0028 (anon can execute SECURITY DEFINER function).
 
 drop policy if exists profiles_update_own on public.profiles;
 
