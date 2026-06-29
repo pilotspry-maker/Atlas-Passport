@@ -1,0 +1,814 @@
+# .github/workflows/rls-regression.yml
+#
+# ════════════════════════════════════════════════════════════════════════════
+# RLS Regression Suite — Atlas Passport
+# ════════════════════════════════════════════════════════════════════════════
+#
+# Runs on every PR to main AND on every push to main.
+# Independently validates 4 regression categories using a dedicated
+# fixture namespace (reg_player_one / reg_player_two) isolated from
+# the exploit suite fixtures.
+#
+# Test categories:
+#   reg-01  Protected field mutation prevention (profiles.is_admin, etc.)
+#   reg-02  Core passport and check-in data integrity (14 assertions)
+#   reg-03  Reward immutability and access control (6 assertions)
+#   reg-04  Policy inventory and structural validation (8 assertions)
+#
+# Gate logic:
+#   Any it() failure → job fails → PR is blocked
+#   If total assertions drop below MIN_TESTS → job fails (detects deleted tests)
+#
+# Runs AFTER rls-exploit-tests — exploit suite must pass first.
+# If exploit suite is failing (migrations not applied), regression
+# tests will also fail at fixture seeding, which surfaces the same root cause.
+#
+# Required secrets (Settings → Secrets → Actions):
+#   NEXT_PUBLIC_SUPABASE_URL       — Supabase project URL
+#   NEXT_PUBLIC_SUPABASE_ANON_KEY  — anon/publishable key
+#   SUPABASE_SERVICE_ROLE_KEY      — service-role key (required by reg-04)
+# ════════════════════════════════════════════════════════════════════════════
+
+name: RLS Regression Tests
+
+on:
+  pull_request:
+    branches:
+      - main
+  push:
+    branches:
+      - main
+    paths:
+      - 'supabase/migrations/**'
+      - 'tests/rls/**'
+      - 'vitest.regression.config.ts'
+      - '.github/workflows/rls-regression.yml'
+
+concurrency:
+  group: rls-regression-${{ github.ref }}
+  cancel-in-progress: true
+
+defaults:
+  run:
+    shell: bash
+
+# ════════════════════════════════════════════════════════════════════════════
+# Job 1 — Seed regression fixtures
+# ════════════════════════════════════════════════════════════════════════════
+#
+# Uses the reg_player_one / reg_player_two user namespace to avoid
+# colliding with the exploit suite's player_one / player_two fixtures.
+# All operations are idempotent.
+
+jobs:
+  seed-regression-fixtures:
+    name: Seed Regression Fixtures
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install httpx
+        run: pip install httpx
+
+      # ── Diagnostic: SUPABASE_SERVICE_ROLE_KEY JWT + grant inspection ────────
+      # Two-part diagnostic to disambiguate PostgREST 42501 failures.
+      #
+      # Part 1 — JWT claim decode (always runs):
+      #   Decodes the SERVICE_ROLE_KEY's middle segment (base64url) and asserts
+      #     role  == 'service_role'
+      #     ref   matches the project ref derived from SUPABASE_URL
+      #     exp   is in the future
+      #   Never prints the JWT itself or its signature.
+      #
+      # Part 2 — pg_proc / pg_roles grant inspection (when a privileged channel
+      # is available):
+      #   Queries pg_catalog for the live grant state of every seed/CI helper
+      #   function. For each function we print oid, owner, overload count, raw
+      #   ACL, and has_function_privilege() bits for service_role, authenticator,
+      #   authenticated, anon, and public. We also report has_schema_privilege()
+      #   USAGE for authenticator and service_role, and rolbypassrls for
+      #   service_role.
+      #
+      #   If overload_count > 1, the GRANT on `public.fn()` (no args) did NOT
+      #   cover sibling overloads. If service_role_execute is false, the grant
+      #   never landed. If authenticator_usage_on_public is false, PostgREST
+      #   can't even reach the schema to SET ROLE service_role.
+      #
+      #   Privileged channels (tried in order):
+      #     1. Supabase Management API (POST /v1/projects/<ref>/database/query)
+      #        requires SUPABASE_ACCESS_TOKEN — a personal access token from
+      #        https://supabase.com/dashboard/account/tokens
+      #     2. Direct Postgres (db.<ref>.supabase.co:5432) requires DB_PASSWORD
+      #        and an unblocked direct-connect (free-tier projects often have
+      #        this disabled in favor of the pooler).
+      #
+      #   If neither channel works, Part 2 is skipped with a clear message.
+      #   Part 2 NEVER fails the build — it's pure diagnostic. The seed step
+      #   that follows will fail naturally if grants are still broken, and now
+      #   we'll have the table that explains why.
+      - name: Diagnose service_role JWT and pg_proc grant state
+        env:
+          SUPABASE_URL:              ${{ secrets.NEXT_PUBLIC_SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+          SUPABASE_ACCESS_TOKEN:     ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+          DB_PASSWORD:               ${{ secrets.DB_PASSWORD }}
+        run: |
+          python3 << 'PYEOF'
+          import base64, json, os, sys, time, urllib.error, urllib.request
+          from urllib.parse import urlparse
+
+          # ── Part 1: JWT claim decode ───────────────────────────────────────
+          url        = os.environ.get("SUPABASE_URL", "").rstrip("/")
+          svc_key    = os.environ.get("SUPABASE_SERVICE_ROLE_KEY", "")
+          mgmt_token = os.environ.get("SUPABASE_ACCESS_TOKEN", "")
+          db_pwd     = os.environ.get("DB_PASSWORD", "")
+
+          if not url:
+              print("::error::SUPABASE_URL (from NEXT_PUBLIC_SUPABASE_URL) is empty.")
+              sys.exit(1)
+          if not svc_key:
+              print("::error::SUPABASE_SERVICE_ROLE_KEY is empty — secret is not set.")
+              sys.exit(1)
+
+          # Supabase issues two service-role key formats:
+          #   - Legacy JWT:    header.payload.signature (3 dot-separated parts)
+          #   - Opaque secret: sb_secret_<random> (single segment)
+          # The downstream seeder (tests/rls/exploits/setup.ts) handles both via
+          # the signup + SECURITY DEFINER RPC path. JWT-claim checks below are
+          # therefore informational only — we skip them cleanly for opaque keys.
+          parts = svc_key.split(".")
+          is_jwt = (len(parts) == 3)
+          if not is_jwt:
+              # Any non-JWT value is treated as opaque (sb_secret_, sbp_, raw token, etc.).
+              # The downstream seeder handles auth via supabase-js, which accepts whatever
+              # key format Supabase currently issues. JWT-claim checks are skipped.
+              print("\n── Part 1: service_role key format ──────────────────────────")
+              fmt_hint = "sb_secret_…" if svc_key.startswith("sb_secret_") else (
+                         "sbp_…"        if svc_key.startswith("sbp_")        else "opaque")
+              print(f"  format             : {fmt_hint}")
+              print("  ✓ non-JWT key detected — skipping JWT-claim checks (seeder handles auth)")
+              print("─" * 63)
+              # Skip JWT decode + claim validation; jump straight to Part 2.
+              parts = None
+
+          def b64url_decode(s):
+              padding = (-len(s)) % 4
+              return base64.urlsafe_b64decode(s + ("=" * padding))
+
+          if parts is not None:
+              try:
+                  payload = json.loads(b64url_decode(parts[1]))
+              except Exception as e:
+                  print(f"::error::Failed to decode JWT payload: {type(e).__name__}: {e}")
+                  sys.exit(1)
+
+              role = payload.get("role", "<missing>")
+              ref  = payload.get("ref",  "<missing>")
+              iss  = payload.get("iss",  "<missing>")
+              exp  = payload.get("exp",  "<missing>")
+
+              host = urlparse(url).hostname or ""
+              url_ref = host.split(".")[0] if host else "<unknown>"
+
+              print("\n── Part 1: service_role JWT diagnostic ────────────────────────")
+              print(f"  iss (issuer)        : {iss}")
+              print(f"  role (claim)        : {role}")
+              print(f"  ref  (claim)        : {ref}")
+              print(f"  ref  (from URL)     : {url_ref}")
+              print(f"  exp  (unix seconds) : {exp}")
+              print(  "───────────────────────────────────────────────────────────────")
+
+              jwt_fail = False
+              if role != "service_role":
+                  print(f"::error::JWT role is '{role}', expected 'service_role'. "
+                        f"The SUPABASE_SERVICE_ROLE_KEY secret carries the WRONG ROLE "
+                        f"(the anon key was likely pasted by mistake). Regenerate from "
+                        f"Supabase Dashboard → Project Settings → API → service_role key, "
+                        f"and update the GitHub secret.")
+                  jwt_fail = True
+              else:
+                  print("  ✓ role claim is 'service_role'")
+
+              if ref in ("<missing>", "", None):
+                  print("::error::JWT has no 'ref' claim — this is not a Supabase-issued key.")
+                  jwt_fail = True
+              elif ref != url_ref:
+                  print(f"::error::JWT ref '{ref}' does NOT match project ref '{url_ref}' "
+                        f"(derived from SUPABASE_URL). The SUPABASE_SERVICE_ROLE_KEY secret "
+                        f"belongs to a DIFFERENT Supabase project. Copy the service_role key "
+                        f"from project '{url_ref}' and update the GitHub secret.")
+                  jwt_fail = True
+              else:
+                  print(f"  ✓ ref claim matches project URL ({url_ref})")
+
+              if isinstance(exp, int):
+                  now = int(time.time())
+                  if exp < now:
+                      print(f"::error::JWT is EXPIRED (exp={exp}, now={now}). Regenerate the service_role key.")
+                      jwt_fail = True
+                  else:
+                      print("  ✓ exp is in the future")
+
+              if jwt_fail:
+                  print("::error::service_role JWT diagnostic FAILED — fix the GitHub secret before re-running.")
+                  sys.exit(1)
+              print("  ✓ service_role JWT diagnostic PASSED")
+
+          # ── Part 2: pg_proc / pg_roles grant inspection ────────────────────
+          target_fns = [
+              "create_test_users",
+              "create_regression_users",
+              "create_exploit_test_users",
+              "seed_ci_fixtures",
+              "seed_ci_fixtures_v2",
+              "seed_ci_passports",
+              "seed_regression_passports",
+              "confirm_test_users",
+              "cleanup_ci_fixtures",
+          ]
+
+          # Single SQL — returns one row per function, broad column set.
+          # Uses inline VALUES list so it's a single statement (Management API
+          # requires a single statement per request).
+          names_sql_list = ", ".join(f"'{n}'" for n in target_fns)
+          query = f"""
+          SELECT
+            p.proname::text                                                     AS function_name,
+            pg_catalog.pg_get_function_identity_arguments(p.oid)::text          AS function_args,
+            p.oid::int                                                          AS function_oid,
+            pg_catalog.pg_get_userbyid(p.proowner)::text                        AS owner_role,
+            (SELECT count(*)::int FROM pg_catalog.pg_proc p2
+               JOIN pg_catalog.pg_namespace n2 ON n2.oid = p2.pronamespace
+               WHERE n2.nspname = 'public' AND p2.proname = p.proname)          AS overload_count,
+            COALESCE(p.proacl::text, '<default>')                               AS acl,
+            pg_catalog.has_function_privilege('service_role',   p.oid, 'EXECUTE') AS svc_exec,
+            pg_catalog.has_function_privilege('authenticator',  p.oid, 'EXECUTE') AS authn_exec,
+            pg_catalog.has_function_privilege('authenticated',  p.oid, 'EXECUTE') AS authd_exec,
+            pg_catalog.has_function_privilege('anon',           p.oid, 'EXECUTE') AS anon_exec,
+            pg_catalog.has_function_privilege('public',         p.oid, 'EXECUTE') AS pub_exec,
+            pg_catalog.has_schema_privilege  ('authenticator', 'public', 'USAGE') AS authn_usage,
+            pg_catalog.has_schema_privilege  ('service_role',  'public', 'USAGE') AS svc_usage,
+            (SELECT r.rolbypassrls FROM pg_catalog.pg_roles r WHERE r.rolname = 'service_role') AS svc_bypassrls
+          FROM pg_catalog.pg_proc p
+          JOIN pg_catalog.pg_namespace n ON n.oid = p.pronamespace
+          WHERE n.nspname = 'public'
+            AND p.proname IN ({names_sql_list})
+          ORDER BY p.proname, p.oid
+          """
+
+          rows = None
+          channel = None
+
+          # ── Channel 1: Supabase Management API ────────────────────────────
+          if mgmt_token:
+              api_url = f"https://api.supabase.com/v1/projects/{url_ref}/database/query"
+              try:
+                  req = urllib.request.Request(
+                      api_url,
+                      data=json.dumps({"query": query}).encode("utf-8"),
+                      headers={
+                          "Authorization": f"Bearer {mgmt_token}",
+                          "Content-Type": "application/json",
+                      },
+                      method="POST",
+                  )
+                  with urllib.request.urlopen(req, timeout=15) as resp:
+                      body = resp.read().decode("utf-8")
+                  rows = json.loads(body)
+                  channel = "Supabase Management API"
+              except urllib.error.HTTPError as e:
+                  err_body = e.read().decode("utf-8", errors="replace")
+                  print(f"\n  Management API failed: HTTP {e.code} — {err_body[:200]}")
+              except Exception as e:
+                  print(f"\n  Management API failed: {type(e).__name__}: {e}")
+
+          # ── Channel 2: Direct Postgres via psycopg ────────────────────────
+          if rows is None and db_pwd:
+              try:
+                  # psycopg3 binary wheel; install on demand
+                  import subprocess
+                  subprocess.check_call(
+                      [sys.executable, "-m", "pip", "install", "--quiet", "psycopg[binary]>=3.1"],
+                      stdout=subprocess.DEVNULL,
+                  )
+                  import psycopg
+                  dsn = (
+                      f"host=db.{url_ref}.supabase.co port=5432 dbname=postgres "
+                      f"user=postgres password={db_pwd} sslmode=require connect_timeout=10"
+                  )
+                  with psycopg.connect(dsn) as conn:
+                      with conn.cursor() as cur:
+                          cur.execute(query)
+                          fetched = cur.fetchall()
+                          colnames = [d.name for d in cur.description]
+                          rows = [dict(zip(colnames, r)) for r in fetched]
+                  channel = "direct Postgres (db.<ref>.supabase.co:5432)"
+              except Exception as e:
+                  print(f"\n  Direct Postgres failed: {type(e).__name__}: {e}")
+
+          if rows is None:
+              print("\n── Part 2: SKIPPED — no privileged DB channel available ──")
+              print("    Add ONE of the following GitHub secrets to enable grant inspection:")
+              print("      • SUPABASE_ACCESS_TOKEN — personal access token from")
+              print("        https://supabase.com/dashboard/account/tokens  (recommended)")
+              print("      • DB_PASSWORD — Postgres password for direct connection")
+              print("    Part 2 is informational; Part 1 (JWT) passed so the seed step")
+              print("    will proceed and either succeed or surface the underlying 42501.")
+              sys.exit(0)
+
+          print(f"\n── Part 2: pg_proc / pg_roles grant inspection (via {channel}) ──")
+
+          if not rows:
+              print("::error::No matching functions found in public schema. Migrations may not be applied to this project.")
+              sys.exit(0)  # don't fail — let the seed step give the canonical error
+
+          def yn(b):
+              if b is True:  return "yes"
+              if b is False: return "NO "
+              return "?  "
+
+          # ── Table 1: per-function EXECUTE grants ──
+          print("\n  Function EXECUTE grants (by signature)")
+          print("  " + "─" * 100)
+          print(f"  {'function(args)':<42}  {'owner':<14}  {'ovl':>3}  {'svc':>3}  {'auth-r':>6}  {'authd':>5}  {'anon':>4}  {'pub':>3}")
+          print("  " + "─" * 100)
+          missing_svc = []
+          overloads_seen = {}
+          for r in rows:
+              sig = f"{r['function_name']}({r['function_args']})"
+              if len(sig) > 42:
+                  sig = sig[:39] + "..."
+              print(f"  {sig:<42}  {r['owner_role']:<14}  {r['overload_count']:>3}  "
+                    f"{yn(r['svc_exec']):>3}  {yn(r['authn_exec']):>6}  "
+                    f"{yn(r['authd_exec']):>5}  {yn(r['anon_exec']):>4}  {yn(r['pub_exec']):>3}")
+              if r['svc_exec'] is False:
+                  missing_svc.append(sig)
+              if r['overload_count'] and r['overload_count'] > 1:
+                  overloads_seen[r['function_name']] = r['overload_count']
+          print("  " + "─" * 100)
+
+          # ── Table 2: ACL strings ──
+          print("\n  Raw ACL (proacl) — exposes non-standard grants")
+          print("  " + "─" * 100)
+          for r in rows:
+              sig = f"{r['function_name']}({r['function_args']})"
+              if len(sig) > 42:
+                  sig = sig[:39] + "..."
+              acl_str = r['acl'] or '<default>'
+              if len(acl_str) > 56:
+                  acl_str = acl_str[:53] + "..."
+              print(f"  {sig:<42}  {acl_str}")
+          print("  " + "─" * 100)
+
+          # ── Schema / role state ──
+          first = rows[0]
+          print("\n  Schema- and role-level state")
+          print("  " + "─" * 60)
+          print(f"  authenticator has USAGE on public : {yn(first['authn_usage'])}")
+          print(f"  service_role  has USAGE on public : {yn(first['svc_usage'])}")
+          print(f"  service_role rolbypassrls         : {yn(first['svc_bypassrls'])}")
+          print("  " + "─" * 60)
+
+          # ── Verdict ──
+          print("\n  Verdict")
+          print("  " + "─" * 60)
+          if first['authn_usage'] is False:
+              print("  ✗ authenticator lacks USAGE on schema public.")
+              print("    PostgREST cannot reach any function in public until this is granted:")
+              print("      GRANT USAGE ON SCHEMA public TO authenticator;")
+          else:
+              print("  ✓ authenticator has USAGE on schema public")
+
+          if missing_svc:
+              print(f"  ✗ service_role lacks EXECUTE on {len(missing_svc)} function(s):")
+              for s in missing_svc:
+                  print(f"      - {s}")
+          else:
+              print("  ✓ service_role has EXECUTE on every targeted function")
+
+          if overloads_seen:
+              print(f"  ⚠ {len(overloads_seen)} function name(s) have multiple overloads —")
+              print(f"    a GRANT on one signature does NOT cover sibling overloads:")
+              for name, n in overloads_seen.items():
+                  print(f"      - {name}: {n} overloads in public")
+          print("  " + "─" * 60)
+
+          if not missing_svc and first['authn_usage'] is not False and not overloads_seen:
+              print("\n  ✓ All grants look correct. If PostgREST still returns 42501, the failure")
+              print("    is NOT a DB ACL issue. Possible causes to investigate next:")
+              print("      • PostgREST role-mapping (authenticator → service_role) misconfigured")
+              print("      • PostgREST schema cache still stale despite NOTIFY pgrst, 'reload schema'")
+              print("      • A SECURITY DEFINER function inside the call chain owns to a different")
+              print("        role and that owner lost privileges")
+          else:
+              print("\n  ✗ Grant inspection identified specific issues — fix them then re-run.")
+          PYEOF
+
+      # ── Pre-seed validation: verify_service_role_permissions() ──────────────
+      # Calls the introspection RPC defined by migration 019 to check that:
+      #   - every seed/CI helper function exists (no MISSING verdict)
+      #   - service_role has EXECUTE on every one (no FAIL verdict)
+      #   - authenticator has USAGE on schema public (no FAIL verdict)
+      #   - no unexpected function overloads exist (WARN — does not block)
+      #
+      # Same channel as the seed step (PostgREST + service_role JWT) so it
+      # catches the exact failure mode that produced the original 42501s:
+      # if anything in the role→grant→function chain is off, this step
+      # surfaces it BEFORE the seed step runs and prints the specific
+      # GRANT statement needed to fix each offending row.
+      #
+      # Graceful when migration 019 is not yet applied: prints an
+      # actionable message and continues. After the migration is applied
+      # once (via apply-migrations-oneshot.yml), every subsequent run
+      # asserts the live grant state automatically.
+      - name: Pre-seed validation — verify service_role permissions
+        env:
+          SUPABASE_URL:              ${{ secrets.NEXT_PUBLIC_SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+        run: |
+          python3 << 'PYEOF'
+          import os, sys, json
+          import httpx
+
+          URL     = os.environ["SUPABASE_URL"].rstrip("/")
+          SVC_KEY = os.environ["SUPABASE_SERVICE_ROLE_KEY"]
+          REST    = f"{URL}/rest/v1"
+          HEADERS = {
+              "apikey":        SVC_KEY,
+              "Authorization": f"Bearer {SVC_KEY}",
+              "Content-Type":  "application/json",
+          }
+
+          print("\n── Pre-seed validation: verify_service_role_permissions() ─────")
+          try:
+              r = httpx.post(f"{REST}/rpc/verify_service_role_permissions",
+                             headers=HEADERS, json={}, timeout=15)
+          except Exception as e:
+              print(f"::error::Network error calling verify_service_role_permissions: {type(e).__name__}: {e}")
+              sys.exit(1)
+
+          # 404 → migration 019 not yet applied. This is a known transitional
+          # state on the first PR after merging migration 019. Print a clear
+          # message and continue so the seed step still runs (and will fail
+          # naturally if grants are actually broken). After the operator runs
+          # apply-migrations-oneshot, all future runs will validate normally.
+          if r.status_code == 404:
+              print("  ⚠ verify_service_role_permissions() not found (HTTP 404).")
+              print("    Migration 019 has not been applied to this project yet.")
+              print("    Apply it via:")
+              print("      gh workflow run apply-migrations-oneshot.yml \\")
+              print("        --repo pilotspry-maker/Atlas-Passport")
+              print("    Then re-run this job. Continuing to seed step for now.")
+              sys.exit(0)
+
+          # 401 / 403 / other 42501 → the validation RPC itself is unreachable.
+          # That's a stronger signal than a single seed RPC failing: it means
+          # the JWT/grant chain is broken at the schema or role level.
+          if r.status_code in (401, 403):
+              print(f"::error::verify_service_role_permissions() returned HTTP {r.status_code}: {r.text}")
+              print("    The service_role JWT cannot call any RPC. Possible causes:")
+              print("      • JWT decoded to anon (re-check the JWT diagnostic step above)")
+              print("      • authenticator lacks USAGE on schema public")
+              print("      • service_role lacks EXECUTE on the validation RPC itself")
+              print("    Fix the secret or grants and re-run.")
+              sys.exit(1)
+
+          if not r.is_success:
+              print(f"::error::verify_service_role_permissions() failed: HTTP {r.status_code}: {r.text}")
+              sys.exit(1)
+
+          rows = r.json()
+          if not isinstance(rows, list):
+              print(f"::error::Unexpected response shape: {type(rows).__name__}: {str(rows)[:200]}")
+              sys.exit(1)
+
+          if not rows:
+              print("::error::verify_service_role_permissions() returned no rows. This means the")
+              print("    target function list is empty or every targeted function is missing.")
+              print("    Apply migrations 006-019 via apply-migrations-oneshot.yml.")
+              sys.exit(1)
+
+          # ── Summary table (always printed, OK or not) ───────────────────────
+          def yn(b):
+              if b is True:  return "yes"
+              if b is False: return "NO "
+              return "?  "
+
+          # Header — column widths chosen to fit the longest realistic content
+          print(f"  {'function(args)':<40}  {'owner':<14}  {'ovl':>3}  "
+                f"{'svc':>3}  {'auth-r':>6}  {'verdict':<8}")
+          print("  " + "─" * 90)
+          fail_rows    = []
+          missing_rows = []
+          warn_rows    = []
+          for row in rows:
+              sig = f"{row['function_name']}({row['function_args']})"
+              if len(sig) > 40:
+                  sig = sig[:37] + "..."
+              owner = (row['owner_role'] or '<none>')[:14]
+              ovl   = row['overload_count'] if row['overload_count'] is not None else 0
+              svc   = yn(row['service_role_execute'])
+              authn = yn(row['authenticator_execute'])
+              verdict = row['verdict']
+              print(f"  {sig:<40}  {owner:<14}  {ovl:>3}  "
+                    f"{svc:>3}  {authn:>6}  {verdict:<8}")
+              if verdict == 'FAIL':
+                  fail_rows.append(row)
+              elif verdict == 'MISSING':
+                  missing_rows.append(row)
+              elif verdict == 'WARN':
+                  warn_rows.append(row)
+          print("  " + "─" * 90)
+
+          # Schema-level state (constant across rows)
+          first = rows[0]
+          print()
+          print(f"  authenticator has USAGE on public : {yn(first['authenticator_usage_on_public'])}")
+          print(f"  service_role  has USAGE on public : {yn(first['service_role_usage_on_public'])}")
+          print(f"  service_role rolbypassrls         : {yn(first['service_role_bypassrls'])}")
+
+          # ── Verdict reporting ───────────────────────────────────────────────
+          if warn_rows:
+              print(f"\n  ⚠ {len(warn_rows)} WARN row(s) — non-blocking:")
+              for row in warn_rows:
+                  print(f"    - public.{row['function_name']}({row['function_args']})")
+                  print(f"      {row['detail']}")
+
+          if missing_rows:
+              print(f"\n::error::{len(missing_rows)} target function(s) are MISSING from the project:")
+              for row in missing_rows:
+                  print(f"    - public.{row['function_name']}")
+                  print(f"      {row['detail']}")
+              print("\n  Apply the relevant migrations via apply-migrations-oneshot.yml.")
+
+          if fail_rows:
+              print(f"\n::error::{len(fail_rows)} function(s) have INSUFFICIENT GRANTS for service_role:")
+              for row in fail_rows:
+                  print(f"    - public.{row['function_name']}({row['function_args']})")
+                  print(f"      {row['detail']}")
+              print("\n  Apply the GRANT statements above to the project and re-run.")
+
+          if fail_rows or missing_rows:
+              print("\n::error::Pre-seed validation FAILED — fix the grants/migrations above before seeding.")
+              sys.exit(1)
+
+          print("\n  ✓ Pre-seed validation PASSED — all seed/CI functions are callable by service_role.")
+          PYEOF
+
+      - name: Seed regression fixtures into Supabase
+        env:
+          SUPABASE_URL:              ${{ secrets.NEXT_PUBLIC_SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+        run: |
+          python3 << 'PYEOF'
+          import os, time
+          import httpx
+
+          URL     = os.environ["SUPABASE_URL"].rstrip("/")
+          SVC_KEY = os.environ["SUPABASE_SERVICE_ROLE_KEY"]
+          REST    = f"{URL}/rest/v1"
+
+          SVC_H = {"apikey": SVC_KEY, "Authorization": f"Bearer {SVC_KEY}", "Content-Type": "application/json"}
+
+          def rpc(fn, args=None):
+              r = httpx.post(f"{REST}/rpc/{fn}", headers=SVC_H, json=args or {}, timeout=30)
+              if not r.is_success:
+                  raise RuntimeError(f"rpc/{fn}: {r.status_code} {r.text}")
+              return r.json()
+
+          # ── Step 0: Pre-clean child rows for regression users ──────────────────
+          # create_regression_users() deletes auth.users, which cascades to
+          # public.profiles. check_ins.user_id → profiles.id is RESTRICT (not
+          # CASCADE), so any check_ins/passports left by a prior CI run must be
+          # deleted BEFORE create_regression_users runs or the auth.users DELETE
+          # fails with 23503.  service_role bypassrls makes this safe.
+          print("\n── Step 0: pre-clean child rows for regression users ──────────")
+          REG_P1 = 'bbbbbbbb-0001-0000-0000-000000000000'
+          REG_P2 = 'bbbbbbbb-0002-0000-0000-000000000000'
+          uf = f"{REG_P1},{REG_P2}"
+          DEL_H = {**SVC_H, "Prefer": "return=minimal"}
+          r = httpx.delete(f"{REST}/check_ins?user_id=in.({uf})", headers=DEL_H, timeout=15)
+          print(f"  pre-clean check_ins: HTTP {r.status_code}")
+          r = httpx.delete(f"{REST}/passports?user_id=in.({uf})", headers=DEL_H, timeout=15)
+          print(f"  pre-clean passports: HTTP {r.status_code}")
+
+          # ── Step 1: Create regression users (SECURITY DEFINER, no GoTrue) ─────
+          # create_regression_users inserts reg_player_one + reg_player_two
+          # directly into auth.users with deterministic UUIDs and NULL fix.
+          # If this fails with 404, migration 009 has not been applied.
+          print("\n── Step 1: create regression users ───────────────────────────")
+          rpc("create_regression_users")
+          time.sleep(1)  # let profiles trigger materialise
+
+          # ── Step 2: Seed all regression fixtures (SECURITY DEFINER RPC) ───────
+          # seed_regression_passports (migration 015) inserts corridors, node,
+          # reward, passports, and check-in in one SECURITY DEFINER call,
+          # bypassing RLS entirely. Direct service-role REST inserts are not
+          # used because service_role BYPASSRLS is unreliable on this Supabase
+          # configuration.
+          print("\n── Step 2: seed all regression fixtures (SECURITY DEFINER) ──")
+          result = rpc("seed_regression_passports")
+          print(f"  fixtures seeded: {result}")
+
+          print("\n── Regression fixtures seeded successfully ────────────────\n")
+          PYEOF
+
+
+  # ════════════════════════════════════════════════════════════════════════════
+  # Job 2 — Run regression tests
+  # ════════════════════════════════════════════════════════════════════════════
+
+  rls-regression-tests:
+    name: RLS Regression Tests (reg-01 → reg-04)
+    runs-on: ubuntu-latest
+    needs: seed-regression-fixtures
+    permissions:
+      contents: read
+      pull-requests: write
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js 24
+        uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+
+      - name: Cache npm
+        uses: actions/cache@v4
+        with:
+          path: ~/.npm
+          key: ${{ runner.os }}-node-${{ hashFiles('package-lock.json') }}
+          restore-keys: ${{ runner.os }}-node-
+
+      - name: Install dependencies
+        run: npm install --legacy-peer-deps
+
+      # ── Run regression suite with JSON + verbose output ────────────────────
+      - name: Run RLS regression suite
+        id: vitest_reg
+        env:
+          SUPABASE_URL:              ${{ secrets.NEXT_PUBLIC_SUPABASE_URL }}
+          SUPABASE_ANON_KEY:         ${{ secrets.NEXT_PUBLIC_SUPABASE_ANON_KEY }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+        run: |
+          mkdir -p test-results
+          npx vitest run \
+            --config vitest.regression.config.ts \
+            --reporter=verbose \
+            --reporter=json \
+            --outputFile=test-results/rls-regression.json
+        continue-on-error: true
+
+      # ── Assertion count gate ───────────────────────────────────────────────
+      - name: Enforce assertion threshold (MIN_TESTS=28)
+        id: reg_count_gate
+        env:
+          MIN_TESTS: '28'
+        run: |
+          python3 << 'PYEOF'
+          import json, os, sys
+
+          MIN_TESTS = int(os.environ.get("MIN_TESTS", "28"))
+          results_path = "test-results/rls-regression.json"
+
+          if not os.path.exists(results_path):
+              print("::error::test-results/rls-regression.json not found.")
+              print("::error::Vitest may have crashed before writing output.")
+              sys.exit(1)
+
+          with open(results_path) as f:
+              report = json.load(f)
+
+          total   = report.get("numTotalTests", 0)
+          passed  = report.get("numPassedTests", 0)
+          failed  = report.get("numFailedTests", 0)
+          skipped = report.get("numPendingTests", 0)
+
+          failures = []
+          for suite in report.get("testResults", []):
+              file_short = (suite.get("name") or suite.get("testFilePath", "unknown")).split("/")[-1]
+              for assertion in suite.get("assertionResults", []):
+                  if assertion["status"] == "failed":
+                      name = " > ".join(assertion.get("ancestorTitles", []) + [assertion["title"]])
+                      msgs = assertion.get("failureMessages", ["(no message)"])
+                      failures.append({
+                          "file": file_short,
+                          "name": name,
+                          "message": (msgs[0] if msgs else "(no message)")[:400],
+                      })
+
+          # Write step summary
+          summary = [
+              "## RLS Regression Test Results", "",
+              "| Metric | Value |", "|---|---|",
+              f"| Tests run | {total} |",
+              f"| Passed | {passed} |",
+              f"| Failed | {failed} |",
+              f"| Skipped | {skipped} |",
+              f"| Threshold | {MIN_TESTS} |", "",
+          ]
+          if failures:
+              summary += ["### Failed Tests", ""]
+              for f_ in failures:
+                  summary += [
+                      f"**`{f_['file']}`** — {f_['name']}",
+                      f"> {f_['message'].splitlines()[0][:300]}",
+                      "",
+                  ]
+          with open(os.environ["GITHUB_STEP_SUMMARY"], "a") as f:
+              f.write("\n".join(summary))
+
+          with open(os.environ["GITHUB_OUTPUT"], "a") as out:
+              out.write(f"total_tests={total}\n")
+              out.write(f"failed_tests={failed}\n")
+              out.write(f"passed_tests={passed}\n")
+              delim = "EOF_REG"
+              lines = "\n".join(f"- `{f_['file']}` → {f_['name']}" for f_ in failures) if failures else "none"
+              out.write(f"failure_list<<{delim}\n{lines}\n{delim}\n")
+
+          if total < MIN_TESTS:
+              print(f"::error::REGRESSION COUNT GATE FAILED: expected ≥{MIN_TESTS}, got {total}")
+              print(f"::error::A regression test file may have been deleted or excluded.")
+              sys.exit(1)
+
+          if failed > 0:
+              print(f"::error::REGRESSION TESTS FAILED: {failed}/{total} tests failed")
+              for f_ in failures:
+                  print(f"::error file={f_['file']}::{f_['name']}")
+              sys.exit(1)
+
+          print(f"✅ All {total} RLS regression tests passed (threshold: {MIN_TESTS}).")
+          PYEOF
+
+      # ── Post failure comment on PR ────────────────────────────────────────
+      - name: Post failure comment on PR
+        if: failure() && github.event_name == 'pull_request'
+        uses: marocchino/sticky-pull-request-comment@v2
+        with:
+          header: rls-regression-report
+          message: |
+            ## ❌ RLS Regression Tests Failed
+
+            **Commit:** `${{ github.sha }}`
+            **Branch:** `${{ github.head_ref }}`
+            **Run:** [${{ github.run_number }}](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }})
+
+            | Tests run | Passed | Failed | Threshold |
+            |---|---|---|---|
+            | ${{ steps.reg_count_gate.outputs.total_tests }} | ${{ steps.reg_count_gate.outputs.passed_tests }} | ${{ steps.reg_count_gate.outputs.failed_tests }} | 28 |
+
+            ### Failing tests
+            ${{ steps.reg_count_gate.outputs.failure_list }}
+
+            ---
+
+            ### What to check
+
+            | Test file | Category | Policies |
+            |---|---|---|
+            | `rls-reg-01-protected-fields.test.ts` | `profiles.is_admin` column guard | `profiles_update_own` (005) |
+            | `rls-reg-02-passport-data.test.ts` | Passport/check-in ownership + isolation | `passports_insert_own` (007), `check_ins_insert_own` (005) |
+            | `rls-reg-03-reward-integrity.test.ts` | Reward immutability + access | `rewards_select_own` (004), `prevent_reward_unclaim` trigger |
+            | `rls-reg-04-policy-inventory.test.ts` | Policy structure + RLS enabled | All policies (004–008) |
+
+            ### Reproduce locally
+            ```bash
+            supabase start && supabase db reset
+            SUPABASE_URL=http://127.0.0.1:54321 \
+            SUPABASE_ANON_KEY=$(supabase status | grep anon | awk '{print $2}') \
+            SUPABASE_SERVICE_ROLE_KEY=$(supabase status | grep service_role | awk '{print $2}') \
+            npm run test:rls-regression
+            ```
+
+            <sub>This comment updates automatically on each push. · RLS Regression Tests · `rls-regression.yml`</sub>
+
+      # ── Clear success comment ──────────────────────────────────────────────
+      - name: Clear failure comment (tests now passing)
+        if: success() && github.event_name == 'pull_request'
+        uses: marocchino/sticky-pull-request-comment@v2
+        with:
+          header: rls-regression-report
+          message: |
+            ## ✅ RLS Regression Tests Passed
+
+            **Commit:** `${{ github.sha }}`
+            **Tests:** ${{ steps.reg_count_gate.outputs.total_tests }} / 28 assertions passed
+
+            Categories confirmed:
+            - reg-01 · Protected field mutation blocked (is_admin, referral_code)
+            - reg-02 · Passport and check-in data integrity enforced
+            - reg-03 · Reward immutability and access control verified
+            - reg-04 · Policy inventory and RLS structure validated
+
+            <sub>RLS Regression Tests · `rls-regression.yml`</sub>

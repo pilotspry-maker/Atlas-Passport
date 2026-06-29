@@ -21,7 +21,7 @@ export default function RealtimePassportUpdater({ passportId }: Props) {
         {
           event: 'UPDATE',
           schema: 'public',
-          table: 'check_ins',
+          table: 'check_ins_player_view',
           filter: `passport_id=eq.${passportId}`,
         },
         () => {

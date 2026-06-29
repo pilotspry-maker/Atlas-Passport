@@ -1,0 +1,119 @@
+# .github/workflows/apply-migrations-oneshot.yml
+#
+# One-shot workflow: applies migrations 005–008 to the live Supabase project.
+# Triggered manually via workflow_dispatch only — never runs automatically.
+# Delete this file after migrations are confirmed applied.
+#
+# Uses the Supabase Management API (HTTPS) — no direct DB port needed.
+#
+# Required GitHub secrets:
+#   SUPABASE_ACCESS_TOKEN       — Supabase personal access token
+#                                 Generate at: https://supabase.com/dashboard/account/tokens
+#   NEXT_PUBLIC_SUPABASE_URL    — https://gaavynmmysdhovpatzlp.supabase.co
+#   NEXT_PUBLIC_SUPABASE_ANON_KEY — your project anon key
+
+name: Apply Migrations 004-008 (ONE-SHOT — delete after use)
+
+on:
+  workflow_dispatch:
+
+jobs:
+  apply-migrations:
+    name: Apply Migrations to Production Supabase
+    runs-on: ubuntu-latest
+    env:
+      SUPABASE_PROJECT_REF: gaavynmmysdhovpatzlp
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Verify SUPABASE_ACCESS_TOKEN is set
+        env:
+          SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+        run: |
+          if [ -z "$SUPABASE_ACCESS_TOKEN" ]; then
+            echo "SUPABASE_ACCESS_TOKEN secret is not set."
+            echo "Generate one at: https://supabase.com/dashboard/account/tokens"
+            echo "Add it to: GitHub -> Settings -> Secrets -> Actions -> New repository secret"
+            exit 1
+          fi
+          echo "SUPABASE_ACCESS_TOKEN is set (${#SUPABASE_ACCESS_TOKEN} chars)"
+
+      - name: Apply migrations 005-008 via Management API
+        env:
+          SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+        run: |
+          python3 << 'PYEOF'
+          import os, json, sys
+          import urllib.request, urllib.error
+
+          token = os.environ['SUPABASE_ACCESS_TOKEN']
+          project_ref = os.environ['SUPABASE_PROJECT_REF']
+          url = f'https://api.supabase.com/v1/projects/{project_ref}/database/query'
+
+          # Migrations to apply. The Supabase Management API is idempotent
+          # in the sense that re-running an already-applied DO block with
+          # IF EXISTS / IF NOT EXISTS guards is safe; CREATE OR REPLACE
+          # FUNCTION re-defines the body but does not duplicate. Re-running
+          # this workflow against an up-to-date project is therefore safe.
+          migrations = [
+            ('005', 'supabase/migrations/005_rls_exploit_patches.sql'),
+            ('006', 'supabase/migrations/006_test_helpers.sql'),
+            ('007', 'supabase/migrations/007_rls_column_guards.sql'),
+            ('008', 'supabase/migrations/008_create_test_users_helper.sql'),
+            ('019', 'supabase/migrations/019_verify_service_role_permissions.sql'),
+          ]
+
+          for num, path in migrations:
+            print(f'Applying migration {num} from {path}...')
+            with open(path) as f:
+              sql = f.read()
+
+            data = json.dumps({'query': sql}).encode('utf-8')
+            req = urllib.request.Request(
+              url,
+              data=data,
+              headers={
+                'Authorization': f'Bearer {token}',
+                'Content-Type': 'application/json',
+              },
+              method='POST',
+            )
+            try:
+              resp = urllib.request.urlopen(req)
+              body = resp.read().decode('utf-8')
+              print(f'Migration {num} applied successfully.')
+              if body and body not in ('[]', 'null'):
+                print(f'  Response: {body[:300]}')
+            except urllib.error.HTTPError as e:
+              body = e.read().decode('utf-8')
+              print(f'Migration {num} FAILED: HTTP {e.code}', file=sys.stderr)
+              print(f'  Error: {body[:500]}', file=sys.stderr)
+              sys.exit(1)
+            except urllib.error.URLError as e:
+              print(f'Migration {num} FAILED: {e.reason}', file=sys.stderr)
+              sys.exit(1)
+
+          print('All migrations applied successfully.')
+          PYEOF
+
+      - name: Verify create_test_users function exists
+        env:
+          SUPABASE_URL: ${{ secrets.NEXT_PUBLIC_SUPABASE_URL }}
+          SUPABASE_ANON_KEY: ${{ secrets.NEXT_PUBLIC_SUPABASE_ANON_KEY }}
+        run: |
+          STATUS=$(curl -s -o /dev/null -w "%{http_code}" \
+            "${SUPABASE_URL}/rest/v1/rpc/create_test_users" \
+            -H "apikey: ${SUPABASE_ANON_KEY}" \
+            -H "Content-Type: application/json" \
+            -d '{}')
+          if [ "$STATUS" = "404" ]; then
+            echo "create_test_users function not found after migration"
+            exit 1
+          fi
+          echo "create_test_users is live (HTTP $STATUS)"
+
+      - name: Summary
+        run: |
+          echo "Migrations 005-008 applied."
+          echo "Next: re-run CI on PR #18 to confirm tests pass, then merge."

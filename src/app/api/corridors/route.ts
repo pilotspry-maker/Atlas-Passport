@@ -16,7 +16,7 @@ export async function GET(request: Request) {
       .select('id, name, city, country, description')
       .eq('id', id)
       .eq('is_active', true)
-      .single()
+      .maybeSingle()
     const corridor = data as Pick<Corridor, 'id' | 'name' | 'city' | 'country' | 'description'> | null
 
     return NextResponse.json({ corridor })

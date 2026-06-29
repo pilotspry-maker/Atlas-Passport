@@ -37,7 +37,7 @@ export default async function NodeDetailPage({ params }: Props) {
 
   const checkInData = passport
     ? await supabase
-        .from('check_ins')
+        .from('check_ins_player_view')
         .select('*')
         .eq('passport_id', passport.id)
         .eq('node_id', nodeId)

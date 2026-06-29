@@ -257,7 +257,43 @@ export interface Database {
         ]
       }
     }
-    Views: Record<never, never>
+    Views: {
+      check_ins_player_view: {
+        Row: {
+          id: string
+          passport_id: string
+          user_id: string
+          node_id: string
+          status: 'pending' | 'approved' | 'rejected'
+          proof_url: string
+          proof_storage_path: string
+          notes: string | null
+          admin_notes: string | null
+          // reviewed_by intentionally excluded — admin-only column hidden by view
+          reviewed_at: string | null
+          submitted_at: string
+          created_at: string
+        }
+        Insert: never  // views are read-only
+        Update: never  // views are read-only
+        Relationships: [
+          {
+            foreignKeyName: "check_ins_passport_id_fkey"
+            columns: ["passport_id"]
+            isOneToOne: false
+            referencedRelation: "passports"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "check_ins_node_id_fkey"
+            columns: ["node_id"]
+            isOneToOne: false
+            referencedRelation: "nodes"
+            referencedColumns: ["id"]
+          }
+        ]
+      }
+    }
     Functions: Record<never, never>
     Enums: Record<never, never>
     CompositeTypes: Record<never, never>
