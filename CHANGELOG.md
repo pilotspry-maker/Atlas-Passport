@@ -4,6 +4,12 @@ All notable changes to Atlas Passport.
 
 ## [Unreleased]
 
+### Fixed — RLS inventory repair + worker 406 loop (chore/fix-rls-and-worker-logs)
+
+- **031 `fix_rewards_policy_checkins_grant`**: Renames `rewards_select_auth`→`rewards_select_own` (REG-4a) keeping the complete-passport gate; re-scopes legacy `check_ins` policy "Travelers insert own checkins" from `TO public`→`TO authenticated` with the full owner+active gate (REG-4f); re-affirms `service_role`-only EXECUTE on `confirm_test_users(TEXT)`.
+- **ci (regression.setup.ts)**: `confirm_test_users` now called with the service-role key (was anon → 42501), mirroring the earlier exploit `setup.ts` fix.
+- **worker (api/corridors/route.ts)**: corridors-by-id poll uses `.maybeSingle()` instead of `.single()` so a 0-row result returns `{ corridor: null }` instead of a PostgREST 406.
+
 ### Fixed — Task 1: Idempotent seed RPCs (PR #40)
 
 - **020 `idempotent_seed_helpers`**: Redeploys `create_exploit_test_users`, `seed_ci_passports`, and `seed_regression_passports` with Clean-slate DELETE blocks + `ON CONFLICT (id) DO UPDATE` on `public.profiles` so the `handle_new_user` trigger not firing can never break the seed. Fixes migration-registry drift between live DB and repo.
