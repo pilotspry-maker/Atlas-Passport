@@ -20,6 +20,9 @@
     "test:rls-all": "npm run test:rls-exploits && npm run test:rls-regression",
     "test:rls-local": "bash scripts/test-rls-local.sh",
     "test:rls-local:all": "bash scripts/test-rls-local.sh --all",
+    "lint:rls-patterns": "node scripts/rls-pattern-lint.mjs",
+    "lint:rls-patterns:changed": "node scripts/rls-pattern-lint.mjs --changed origin/main",
+    "lint:rls-patterns:json": "node scripts/rls-pattern-lint.mjs --json",
     "prepare": "if [ -d .git ]; then cp scripts/pre-commit-rls.sh .git/hooks/pre-commit && chmod +x .git/hooks/pre-commit; fi",
     "test:unit": "vitest run --config vitest.unit.config.ts",
     "test:unit:watch": "vitest --config vitest.unit.config.ts"
