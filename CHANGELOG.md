@@ -4,6 +4,10 @@ All notable changes to Atlas Passport.
 
 ## [Unreleased]
 
+### Performance — Task 7: Covering indexes on unindexed FK columns (branch `claude/atlas-passport-mvp-hw9hmr`)
+
+- **037 `covering_fk_indexes`**: Adds 12 `CREATE INDEX IF NOT EXISTS` indexes on FK columns that were missing from the advisor's `unindexed_foreign_keys` report. Core app tables: `passports.corridor_id`, `check_ins.node_id`, `check_ins.traveler_id` (partial, WHERE NOT NULL), `check_ins.reviewed_by` (partial, WHERE NOT NULL). Orion tables: `passport_activations.traveler_id`, `passport_activations.corridor_id`, `mission_progress.activation_id` (second column of composite PK needs own index for activation-first lookups), `ap_events.traveler_id`, `ap_events.created_at DESC` (time-range monitor queries), `referral_events.referrer_id`, `referral_events.referred_id`. Already indexed: `nodes.corridor_id`, `passports.user_id`, `check_ins.passport_id`, `check_ins.user_id`, `rewards.corridor_id` (004), Orion traveler_profiles PK. Verification DO block asserts all 12 indexes exist.
+
 ### Performance/Security — Task 6: Wrap bare auth.uid() in (select auth.uid()) (branch `claude/atlas-passport-mvp-hw9hmr`)
 
 - **036 `wrap_auth_uid_initplan`**: Fixes the `auth_rls_initplan` Supabase advisor finding on 5 remaining policies not already addressed by migrations 031/033. Rewrites `profiles_update_own` (USING + WITH CHECK + nested WHERE), `passports_insert_own` (WITH CHECK), and the three `check_in_proofs_*` storage.objects policies to use `(select auth.uid())` so Postgres can cache the session UID as a startup initplan instead of re-evaluating it per row. Also updates `check_ins_player_view` WHERE clause for consistency. Behaviorally identical — no access rules changed.
