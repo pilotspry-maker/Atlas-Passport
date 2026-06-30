@@ -131,7 +131,7 @@ jobs:
       # ── 8. Post PR comment with size table ──────────────────────────────────
       - name: Comment bundle sizes on PR
         if: github.event_name == 'pull_request'
-        uses: marocchino/sticky-pull-request-comment@v2
+        uses: marocchino/sticky-pull-request-comment@v3
         with:
           header: bundle-size-report
           message: |
@@ -390,7 +390,7 @@ jobs:
       # ── 6. Post failure summary as sticky PR comment ──────────────────────────
       - name: Post RLS failure summary
         if: failure() && github.event_name == 'pull_request'
-        uses: marocchino/sticky-pull-request-comment@v2
+        uses: marocchino/sticky-pull-request-comment@v3
         with:
           header: rls-test-report
           message: |
