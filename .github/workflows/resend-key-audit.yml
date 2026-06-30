@@ -1,0 +1,308 @@
+# .github/workflows/resend-key-audit.yml
+#
+# ════════════════════════════════════════════════════════════════════════════
+# Resend API Key Weekly Audit — Atlas Passport
+# ════════════════════════════════════════════════════════════════════════════
+#
+# Runs every Monday at 13:00 UTC (9 AM ET during EDT / 8 AM ET during EST —
+# GitHub Actions cron is UTC-only and does not follow DST). Audits the Resend
+# account against the committed allowlist at
+# `docs/security/approved-resend-keys.md`.
+#
+# Anomaly conditions that trigger a Slack ping:
+#   1. The keeper's `id` is missing from Resend's `/api-keys` response
+#   2. The paired send-test through the production `RESEND_API_KEY` fails
+#   3. Resend's response contains an `id` not present in `approved_keys`
+#
+# On a clean run (no anomalies) the workflow exits silently — no Slack noise.
+#
+# Required repo secrets (Settings → Secrets and variables → Actions):
+#   • RESEND_AUDIT_KEY      — dedicated full_access key used only by this job
+#   • RESEND_API_KEY        — production sender key (same one Vercel uses)
+#   • RESEND_FROM_EMAIL     — verified sender address (e.g. noreply@your-domain)
+#   • AUDIT_TEST_RECIPIENT  — inbox that should receive the weekly test send
+#   • SLACK_WEBHOOK_URL     — incoming-webhook URL for the alert channel
+#
+# Manual run: Actions tab → "Resend Key Weekly Audit" → Run workflow.
+# ════════════════════════════════════════════════════════════════════════════
+
+name: Resend Key Weekly Audit
+
+on:
+  schedule:
+    # Every Monday at 13:00 UTC = 9 AM ET (EDT) / 8 AM ET (EST)
+    - cron: "0 13 * * 1"
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+concurrency:
+  group: resend-key-audit
+  cancel-in-progress: false
+
+jobs:
+  audit:
+    name: Audit Resend API keys
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Verify required secrets are present
+        env:
+          RESEND_AUDIT_KEY: ${{ secrets.RESEND_AUDIT_KEY }}
+          RESEND_API_KEY: ${{ secrets.RESEND_API_KEY }}
+          RESEND_FROM_EMAIL: ${{ secrets.RESEND_FROM_EMAIL }}
+          AUDIT_TEST_RECIPIENT: ${{ secrets.AUDIT_TEST_RECIPIENT }}
+          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+        run: |
+          missing=()
+          [[ -z "$RESEND_AUDIT_KEY" ]] && missing+=("RESEND_AUDIT_KEY")
+          [[ -z "$RESEND_API_KEY" ]] && missing+=("RESEND_API_KEY")
+          [[ -z "$RESEND_FROM_EMAIL" ]] && missing+=("RESEND_FROM_EMAIL")
+          [[ -z "$AUDIT_TEST_RECIPIENT" ]] && missing+=("AUDIT_TEST_RECIPIENT")
+          [[ -z "$SLACK_WEBHOOK_URL" ]] && missing+=("SLACK_WEBHOOK_URL")
+          if [[ ${#missing[@]} -gt 0 ]]; then
+            echo "::error::Missing required secrets: ${missing[*]}"
+            echo "Add them at: Settings → Secrets and variables → Actions"
+            exit 1
+          fi
+          echo "All required secrets present."
+
+      - name: Install yq for YAML parsing
+        run: |
+          sudo wget -qO /usr/local/bin/yq \
+            https://github.com/mikefarah/yq/releases/latest/download/yq_linux_amd64
+          sudo chmod +x /usr/local/bin/yq
+          yq --version
+
+      - name: Extract approved-keys YAML block
+        id: allowlist
+        run: |
+          set -euo pipefail
+          ALLOWLIST_FILE="docs/security/approved-resend-keys.md"
+          if [[ ! -f "$ALLOWLIST_FILE" ]]; then
+            echo "::error::Allowlist file not found: $ALLOWLIST_FILE"
+            exit 1
+          fi
+
+          awk '/<!-- BEGIN_APPROVED_KEYS -->/{flag=1; next}
+               /<!-- END_APPROVED_KEYS -->/{flag=0}
+               flag && /^```yaml/{next}
+               flag && /^```/{next}
+               flag' "$ALLOWLIST_FILE" > /tmp/allowlist.yaml
+
+          echo "--- Extracted allowlist ---"
+          cat /tmp/allowlist.yaml
+          echo "---------------------------"
+
+          KEEPER_ID=$(yq '.keeper_id' /tmp/allowlist.yaml)
+          KEEPER_FP=$(yq '.keeper_fingerprint' /tmp/allowlist.yaml)
+          echo "keeper_id=$KEEPER_ID" >> "$GITHUB_OUTPUT"
+          echo "keeper_fingerprint=$KEEPER_FP" >> "$GITHUB_OUTPUT"
+
+          # Detect bootstrap mode (placeholders not yet replaced)
+          if [[ "$KEEPER_ID" == "REPLACE_WITH_KEEPER_ID" ]]; then
+            echo "bootstrap=true" >> "$GITHUB_OUTPUT"
+            echo "::warning::Allowlist still contains placeholder IDs — diff check will be skipped, only keeper send-test will run."
+          else
+            echo "bootstrap=false" >> "$GITHUB_OUTPUT"
+          fi
+
+          # Emit approved-id list (one per line) for grep checks
+          yq '.approved_keys[].id' /tmp/allowlist.yaml > /tmp/approved_ids.txt
+          echo "--- Approved IDs ---"
+          cat /tmp/approved_ids.txt
+          echo "--------------------"
+
+      - name: List Resend API keys
+        id: resend_list
+        env:
+          RESEND_AUDIT_KEY: ${{ secrets.RESEND_AUDIT_KEY }}
+        run: |
+          set -euo pipefail
+          HTTP_STATUS=$(curl -sS -o /tmp/resend_keys.json -w "%{http_code}" \
+            https://api.resend.com/api-keys \
+            -H "Authorization: Bearer $RESEND_AUDIT_KEY")
+          echo "Resend GET /api-keys → HTTP $HTTP_STATUS"
+
+          if [[ "$HTTP_STATUS" != "200" ]]; then
+            echo "::error::Resend list call failed with HTTP $HTTP_STATUS"
+            echo "Response body:"
+            cat /tmp/resend_keys.json
+            echo "list_failed=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          jq '.data[] | {id, name, created_at}' /tmp/resend_keys.json
+          jq -r '.data[].id' /tmp/resend_keys.json > /tmp/live_ids.txt
+          echo "live_ids_count=$(wc -l < /tmp/live_ids.txt)" >> "$GITHUB_OUTPUT"
+          echo "list_failed=false" >> "$GITHUB_OUTPUT"
+
+      - name: Check keeper presence
+        id: keeper_check
+        if: steps.resend_list.outputs.list_failed == 'false' && steps.allowlist.outputs.bootstrap == 'false'
+        run: |
+          set -euo pipefail
+          KEEPER_ID="${{ steps.allowlist.outputs.keeper_id }}"
+          if grep -Fxq "$KEEPER_ID" /tmp/live_ids.txt; then
+            echo "Keeper id $KEEPER_ID present in Resend account."
+            echo "keeper_missing=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "::error::Keeper id $KEEPER_ID NOT FOUND in Resend account!"
+            echo "keeper_missing=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Detect unauthorized keys
+        id: unauthorized_check
+        if: steps.resend_list.outputs.list_failed == 'false' && steps.allowlist.outputs.bootstrap == 'false'
+        run: |
+          set -euo pipefail
+          UNAUTHORIZED=()
+          while IFS= read -r live_id; do
+            [[ -z "$live_id" ]] && continue
+            if ! grep -Fxq "$live_id" /tmp/approved_ids.txt; then
+              UNAUTHORIZED+=("$live_id")
+            fi
+          done < /tmp/live_ids.txt
+
+          if [[ ${#UNAUTHORIZED[@]} -eq 0 ]]; then
+            echo "All live keys are in the allowlist."
+            echo "unauthorized_count=0" >> "$GITHUB_OUTPUT"
+          else
+            echo "::error::Found ${#UNAUTHORIZED[@]} unauthorized key(s) in Resend:"
+            printf '  - %s\n' "${UNAUTHORIZED[@]}"
+            printf '%s\n' "${UNAUTHORIZED[@]}" > /tmp/unauthorized_ids.txt
+            echo "unauthorized_count=${#UNAUTHORIZED[@]}" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Send paired test email through production key
+        id: send_test
+        env:
+          RESEND_API_KEY: ${{ secrets.RESEND_API_KEY }}
+          RESEND_FROM_EMAIL: ${{ secrets.RESEND_FROM_EMAIL }}
+          AUDIT_TEST_RECIPIENT: ${{ secrets.AUDIT_TEST_RECIPIENT }}
+        run: |
+          set -euo pipefail
+          STAMP=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
+          BODY=$(jq -nc \
+            --arg from "$RESEND_FROM_EMAIL" \
+            --arg to "$AUDIT_TEST_RECIPIENT" \
+            --arg subject "[Atlas-Passport] Resend key audit ping $STAMP" \
+            --arg text "Weekly audit send-test from the production RESEND_API_KEY. If you received this, the keeper still works. Triggered at $STAMP UTC." \
+            '{from: $from, to: $to, subject: $subject, text: $text}')
+
+          HTTP_STATUS=$(curl -sS -o /tmp/send_result.json -w "%{http_code}" \
+            -X POST https://api.resend.com/emails \
+            -H "Authorization: Bearer $RESEND_API_KEY" \
+            -H "Content-Type: application/json" \
+            -d "$BODY")
+          echo "Resend POST /emails → HTTP $HTTP_STATUS"
+          cat /tmp/send_result.json
+          echo ""
+
+          if [[ "$HTTP_STATUS" =~ ^2 ]]; then
+            echo "send_failed=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "::error::Production key send-test failed (HTTP $HTTP_STATUS)"
+            echo "send_failed=true" >> "$GITHUB_OUTPUT"
+            echo "send_status=$HTTP_STATUS" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Determine if Slack ping is needed
+        id: ping_decision
+        run: |
+          set -euo pipefail
+          REASONS=()
+
+          if [[ "${{ steps.resend_list.outputs.list_failed }}" == "true" ]]; then
+            REASONS+=("Resend list call failed — could not enumerate keys")
+          fi
+          if [[ "${{ steps.keeper_check.outputs.keeper_missing }}" == "true" ]]; then
+            REASONS+=("Production keeper ${{ steps.allowlist.outputs.keeper_fingerprint }} (id ${{ steps.allowlist.outputs.keeper_id }}) is MISSING from the Resend account")
+          fi
+          if [[ "${{ steps.unauthorized_check.outputs.unauthorized_count }}" != "" \
+                && "${{ steps.unauthorized_check.outputs.unauthorized_count }}" != "0" ]]; then
+            UNAUTH_LIST=$(paste -sd "," /tmp/unauthorized_ids.txt 2>/dev/null || echo "(see logs)")
+            REASONS+=("${{ steps.unauthorized_check.outputs.unauthorized_count }} unauthorized key(s) found: $UNAUTH_LIST")
+          fi
+          if [[ "${{ steps.send_test.outputs.send_failed }}" == "true" ]]; then
+            REASONS+=("Production send-test FAILED (HTTP ${{ steps.send_test.outputs.send_status }})")
+          fi
+
+          if [[ ${#REASONS[@]} -eq 0 ]]; then
+            echo "ping=false" >> "$GITHUB_OUTPUT"
+            echo "✅ Clean audit. No Slack ping."
+          else
+            echo "ping=true" >> "$GITHUB_OUTPUT"
+            # Newline-joined for the Slack payload
+            {
+              echo "reasons<<EOF"
+              printf '• %s\n' "${REASONS[@]}"
+              echo "EOF"
+            } >> "$GITHUB_OUTPUT"
+            echo "⚠️ Anomalies detected — will ping Slack."
+            printf '%s\n' "${REASONS[@]}"
+          fi
+
+      - name: Post Slack anomaly alert
+        if: steps.ping_decision.outputs.ping == 'true'
+        env:
+          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+        run: |
+          set -euo pipefail
+          REASONS_TEXT=$(cat <<'EOF'
+          ${{ steps.ping_decision.outputs.reasons }}
+          EOF
+          )
+          RUN_URL="${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+
+          PAYLOAD=$(jq -nc \
+            --arg text "*Atlas-Passport — Resend key audit anomaly*" \
+            --arg reasons "$REASONS_TEXT" \
+            --arg run_url "$RUN_URL" \
+            '{
+              text: $text,
+              blocks: [
+                {type: "header", text: {type: "plain_text", text: "⚠️ Resend key audit anomaly"}},
+                {type: "section", text: {type: "mrkdwn", text: "*Atlas-Passport* — weekly Resend key audit detected issues:"}},
+                {type: "section", text: {type: "mrkdwn", text: $reasons}},
+                {type: "context", elements: [{type: "mrkdwn", text: ("<" + $run_url + "|View workflow run>")}]}
+              ]
+            }')
+
+          HTTP_STATUS=$(curl -sS -o /tmp/slack_result.txt -w "%{http_code}" \
+            -X POST "$SLACK_WEBHOOK_URL" \
+            -H "Content-Type: application/json" \
+            -d "$PAYLOAD")
+          echo "Slack webhook → HTTP $HTTP_STATUS"
+          cat /tmp/slack_result.txt
+          echo ""
+
+          if [[ ! "$HTTP_STATUS" =~ ^2 ]]; then
+            echo "::error::Slack webhook returned non-2xx ($HTTP_STATUS)"
+            exit 1
+          fi
+
+      - name: Summary
+        if: always()
+        run: |
+          {
+            echo "## Resend Key Audit — $(date -u +'%Y-%m-%d %H:%M UTC')"
+            echo ""
+            echo "| Check | Result |"
+            echo "|---|---|"
+            echo "| Resend list | ${{ steps.resend_list.outputs.list_failed == 'true' && '❌ FAILED' || '✅ ok' }} |"
+            if [[ "${{ steps.allowlist.outputs.bootstrap }}" == "true" ]]; then
+              echo "| Keeper present | ⏭ skipped (bootstrap mode) |"
+              echo "| Unauthorized keys | ⏭ skipped (bootstrap mode) |"
+            else
+              echo "| Keeper present | ${{ steps.keeper_check.outputs.keeper_missing == 'true' && '❌ MISSING' || '✅ ok' }} |"
+              echo "| Unauthorized keys | ${{ steps.unauthorized_check.outputs.unauthorized_count == '0' && '✅ none' || format('❌ {0} found', steps.unauthorized_check.outputs.unauthorized_count) }} |"
+            fi
+            echo "| Send-test | ${{ steps.send_test.outputs.send_failed == 'true' && '❌ FAILED' || '✅ delivered' }} |"
+            echo "| Slack ping | ${{ steps.ping_decision.outputs.ping == 'true' && '⚠️ sent' || '✅ not needed' }} |"
+          } >> "$GITHUB_STEP_SUMMARY"
