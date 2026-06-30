@@ -76,7 +76,7 @@ const WEAK_PASSWORD_MESSAGE =
   'That password is too weak. Try a longer one with a mix of letters, numbers, and symbols.'
 
 const RATE_LIMIT_MESSAGE =
-  'Too many attempts. Please wait a minute before trying again.'
+  'Too many attempts. Please wait a moment before trying again.'
 
 const NETWORK_MESSAGE =
   'Connection error — please check your internet and try again.'
