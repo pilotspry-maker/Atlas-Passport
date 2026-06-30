@@ -4,6 +4,24 @@ All notable changes to Atlas Passport.
 
 ## [Unreleased]
 
+### Performance — Task 7: Covering indexes on unindexed FK columns (branch `claude/atlas-passport-mvp-hw9hmr`)
+
+- **040 `covering_fk_indexes`**: Adds 12 `CREATE INDEX IF NOT EXISTS` indexes on FK columns that were missing from the advisor's `unindexed_foreign_keys` report. Core app tables: `passports.corridor_id`, `check_ins.node_id`, `check_ins.traveler_id` (partial, WHERE NOT NULL), `check_ins.reviewed_by` (partial, WHERE NOT NULL). Orion tables: `passport_activations.traveler_id`, `passport_activations.corridor_id`, `mission_progress.activation_id` (second column of composite PK needs own index for activation-first lookups), `ap_events.traveler_id`, `ap_events.created_at DESC` (time-range monitor queries), `referral_events.referrer_id`, `referral_events.referred_id`. Already indexed: `nodes.corridor_id`, `passports.user_id`, `check_ins.passport_id`, `check_ins.user_id`, `rewards.corridor_id` (004), Orion traveler_profiles PK. Verification DO block asserts all 12 indexes exist.
+
+### Performance/Security — Task 6: Wrap bare auth.uid() in (select auth.uid()) (branch `claude/atlas-passport-mvp-hw9hmr`)
+
+- **039 `wrap_auth_uid_initplan`**: Fixes the `auth_rls_initplan` Supabase advisor finding on 5 remaining policies not already addressed by migrations 031/033. Also fixes the HTTP 500 recursion bug (PR #46 root cause): migration 005's `profiles_update_own` WITH CHECK contained `SELECT is_admin FROM profiles WHERE id = auth.uid()`, which after migration 033 wrapped `profiles_select_own`'s USING in `(select auth.uid())`, triggered infinite RLS recursion and PostgREST 500. Fix: adds `committed_is_admin(uuid)` SECURITY DEFINER STABLE function (search_path='', exposed to authenticated only) that reads `is_admin` bypassing RLS; rewrites `profiles_update_own` to call it. Also wraps `passports_insert_own` (WITH CHECK) and the three `check_in_proofs_*` storage.objects policies; updates `check_ins_player_view` WHERE clause. Supersedes PR #46.
+
+### Security — Task 4: Restrict corridor-covers storage bucket (branch `claude/atlas-passport-mvp-hw9hmr`)
+
+- **038 `restrict_corridor_covers_bucket`**: Sets `corridor-covers` bucket `public = FALSE` (disables CDN unauthenticated access and anonymous listing). Drops the open `corridor_covers_select_public` policy (no role restriction). Adds `corridor_covers_select_auth` (FOR SELECT TO authenticated) and `corridor_covers_insert_admin` (FOR INSERT TO authenticated, defence-in-depth alongside the admin route's service_role). The corridors page already gates on `if (!user) redirect('/auth/login')` and no unauthenticated page renders cover images, so the change has no user-facing impact.
+
+### Security — Task 2: Tighten Orion INSERT policies + baseline waitlist_entries (branch `claude/atlas-passport-mvp-hw9hmr`)
+
+- **037 `tighten_orion_insert_policies`**: Closes the unrestricted INSERT gap left deliberately open by migration 032. Drops `"Service inserts ap events"` and `"Service inserts referrals"` (`TO public WITH CHECK (true)`), which allowed any authenticated or anon user to inject arbitrary rows into `ap_events` (spoofed atlas-points) or `referral_events` (forged referral chains). `service_role` is BYPASSRLS — no replacement policy is needed for the worker layer. Baselines `public.waitlist_entries` (`CREATE TABLE IF NOT EXISTS`) — this table existed out-of-band in production (CLAUDE.md §12) but was absent from migration history. Adds an email-format CHECK constraint (`~* '^[^@\s]+@[^@\s]+\.[^@\s]+$'`, NOT VALID for live-data compatibility) and an INSERT policy scoped to `anon, authenticated` with the same regex in WITH CHECK. No SELECT policy for public — only service_role reads via BYPASSRLS. Verification DO block asserts zero INSERT policies for public/anon/authenticated on both Orion event tables and that RLS is enabled on waitlist_entries.
+- **exploit-07-orion-write-fence.test.ts**: 5 new RLS exploit assertions — (7a-1) authenticated INSERT into ap_events blocked; (7a-2) anon INSERT into ap_events blocked; (7b-1) authenticated INSERT into referral_events blocked; (7c) anon INSERT into waitlist_entries with valid email accepted; (7d) anon INSERT with invalid email rejected; (7e) anon GET /waitlist_entries returns empty array (no SELECT policy). Exploit threshold updated from 24 → 30 in `rls-exploit-tests.yml`.
+
+
 ### Added — Orion schema baseline + Travelers policy rescope (branch `chore/orion-schema-baseline-and-rescope`)
 
 - **032 `orion_schema_baseline`**: Baselines the 5 live-only "Orion" tables into repo migration history so CI's bootstrap-from-zero (`supabase db push --local`) matches live: `traveler_profiles` (PK FK → `auth.users(id) ON DELETE CASCADE`, per CLAUDE.md §12), `passport_activations`, `mission_progress` (composite PK), `ap_events`, `referral_events`. Enables RLS on each and recreates the 12 existing policies **exactly as live** — `TO public` with bare `auth.uid()`, including the 2 `Service inserts *` policies (`WITH CHECK (true)`). Also baselines a drift column: `check_ins.traveler_id` (nullable uuid, no FK) — added out-of-band in live and confirmed present via live `information_schema`. `CREATE TABLE/COLUMN IF NOT EXISTS` + `DROP POLICY IF EXISTS` make it a no-op when applied to live. Ends with a verification DO block asserting all 5 tables exist with `rowsecurity = true` and that `check_ins.traveler_id` exists.
@@ -59,3 +77,4 @@ Migrations 020–030 are function replacements (`CREATE OR REPLACE`), index addi
 -- DROP FUNCTION IF EXISTS public.get_public_rls_status();
 -- No data is destroyed by any of these migrations.
 ```
+

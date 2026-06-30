@@ -18,6 +18,18 @@ jobs:
   verify-env-vars:
     name: Verify required env vars in Vercel
     runs-on: ubuntu-latest
+    # ────────────────────────────────────────────────────────────────────
+    # Skip for Dependabot PRs.
+    #
+    # GitHub does not expose regular Actions secrets to workflows triggered
+    # by `pull_request` events whose actor is `dependabot[bot]`, so
+    # `secrets.VERCEL_TOKEN` resolves to the empty string and the Vercel API
+    # call fails with 401 — a false negative that has nothing to do with the
+    # dep bump itself. The required check status is still reported via the
+    # `verify-env-vars-skip` passthrough job below so branch protection stays
+    # green for Dependabot PRs.
+    # ────────────────────────────────────────────────────────────────────
+    if: github.actor != 'dependabot[bot]'
 
     steps:
       - name: Fetch and validate Vercel env vars
@@ -78,3 +90,24 @@ jobs:
             echo "Fix: Vercel dashboard -> atlas-passport -> Settings -> Environment Variables"
             exit 1
           fi
+
+  # ──────────────────────────────────────────────────────────────────────────
+  # Passthrough job for Dependabot PRs.
+  #
+  # Branch protection requires the `Verify required env vars in Vercel` check
+  # name to report a status on every PR. Because the main job is conditionally
+  # skipped for `dependabot[bot]`, this stub publishes the same check name
+  # with a success status so Dependabot PRs aren't blocked on a check that
+  # can never run (no secret access).
+  # ──────────────────────────────────────────────────────────────────────────
+  verify-env-vars-skip:
+    name: Verify required env vars in Vercel
+    runs-on: ubuntu-latest
+    if: github.actor == 'dependabot[bot]'
+    steps:
+      - name: Skip (Dependabot PR — no secret access)
+        run: |
+          echo "Skipping Vercel env-var verification for Dependabot PR."
+          echo "Reason: GitHub does not expose VERCEL_TOKEN to pull_request runs"
+          echo "whose actor is dependabot[bot]. The push event on main will"
+          echo "re-run this check with full secret access once merged."

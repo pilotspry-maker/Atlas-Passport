@@ -11,6 +11,8 @@
     "start": "next start",
     "lint": "eslint src",
     "email": "email dev --dir emails --port 3001",
+    "test:unit": "vitest run --config vitest.unit.config.ts",
+    "test:unit:watch": "vitest --config vitest.unit.config.ts",
     "test:rls-exploits": "vitest run --config vitest.rls.config.ts",
     "test:rls-exploits:watch": "vitest --config vitest.rls.config.ts",
     "test:rls-regression": "vitest run --config vitest.regression.config.ts",
@@ -18,7 +20,9 @@
     "test:rls-all": "npm run test:rls-exploits && npm run test:rls-regression",
     "test:rls-local": "bash scripts/test-rls-local.sh",
     "test:rls-local:all": "bash scripts/test-rls-local.sh --all",
-    "prepare": "if [ -d .git ]; then cp scripts/pre-commit-rls.sh .git/hooks/pre-commit && chmod +x .git/hooks/pre-commit; fi"
+    "prepare": "if [ -d .git ]; then cp scripts/pre-commit-rls.sh .git/hooks/pre-commit && chmod +x .git/hooks/pre-commit; fi",
+    "test:unit": "vitest run --config vitest.unit.config.ts",
+    "test:unit:watch": "vitest --config vitest.unit.config.ts"
   },
   "dependencies": {
     "@react-email/code-block": "^0.2.1",
@@ -27,12 +31,12 @@
     "@supabase/supabase-js": "^2.45.0",
     "@vercel/analytics": "^2.0.1",
     "clsx": "^2.1.1",
-    "date-fns": "^3.6.0",
+    "date-fns": "^4.4.0",
     "lucide-react": "^0.400.0",
     "next": "^16.2.9",
     "react": "^19.2.7",
     "react-dom": "^19.2.7",
-    "react-email": "^6.6.4",
+    "react-email": "^6.6.5",
     "resend": "^3.5.0",
     "tailwind-merge": "^2.4.0"
   },
@@ -41,15 +45,18 @@
     "@types/react": "^19.2.17",
     "@types/react-dom": "^19.2.3",
     "autoprefixer": "^10.4.19",
-    "eslint": "^9.39.4",
+    "eslint": "~9.39.4",
     "eslint-config-next": "^16.2.9",
+    "eslint-plugin-react": "~7.37.5",
     "postcss": "^8.5.10",
     "tailwindcss": "^3.4.6",
     "typescript": "^5.5.3",
-    "vitest": "^2.1.9"
+    "vitest": "^4.1.9"
   },
+  "//eslint-pin": "Pin eslint <10 until eslint-config-next ships stable ESLint 10 support. eslint-plugin-react@7.37.x calls the removed context.getFilename() under ESLint 10. Re-evaluate once eslint-config-next >=16.3.0 (stable) is released.",
   "overrides": {
     "prismjs": "^1.30.0",
-    "cookie": "^1.1.1"
+    "cookie": "^1.1.1",
+    "eslint": "~9.39.4"
   }
 }
