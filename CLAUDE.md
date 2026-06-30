@@ -149,6 +149,9 @@ src/
 emails/                 # React Email templates
 supabase/
   migrations/           # SQL migrations — run in order, idempotent
+atlas-ops/
+  finish-lockdown.sh    # Local-machine secret rotation (VERCEL_TOKEN, SUPABASE_SERVICE_ROLE_KEY, RESEND_API_KEY)
+                        # Run from YOUR machine — not in CI. Requires: gh auth, curl, jq.
 ```
 
 ---
@@ -490,7 +493,9 @@ Only grant `anon` or `authenticated` to a SECURITY DEFINER function if it is exp
 
 | Item | Owner | Notes |
 |---|---|---|
-| Update GitHub Actions secret `SUPABASE_SERVICE_ROLE_KEY` | Operator | Stale value caused 2026-06-27 CI red. Paste current service_role JWT from Supabase dashboard, re-run failed workflow. |
+| **Run `atlas-ops/finish-lockdown.sh`** from local machine | Operator | Rotates VERCEL_TOKEN, SUPABASE_SERVICE_ROLE_KEY, RESEND_API_KEY. Pull branch, then: `HISTFILE=/dev/null bash ./atlas-ops/finish-lockdown.sh` |
+| **Revoke old RESEND key** `re_JC6PSzFE_…` at resend.com | Operator | After finish-lockdown.sh confirms email smoke test passes |
+| Update GitHub Actions secret `SUPABASE_SERVICE_ROLE_KEY` | Operator | Stale value caused 2026-06-27 CI red. Paste current service_role JWT from Supabase dashboard, re-run failed workflow. Superseded by finish-lockdown.sh once run. |
 | Apply migrations 004 → 008 to production | Operator (manual SQL paste) | Combined file ready |
 | Re-run CI on PR #18 | Auto on push | Should pass once migrations + secret are live |
 | Merge PR #18 | Operator | Use `enforce_admins` bypass flow |
