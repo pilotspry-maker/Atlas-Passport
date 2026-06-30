@@ -4,7 +4,15 @@
 **Target recovery time:** ≤ 10 minutes  
 **Supabase project:** `gaavynmmysdhovpatzlp`  
 **SQL Editor:** https://supabase.com/dashboard/project/gaavynmmysdhovpatzlp/sql/new  
-**Last updated:** 2026-06-23
+**Last updated:** 2026-06-28
+
+> The `curl` snippets below reference `$NEXT_PUBLIC_SUPABASE_ANON_KEY`.
+> Export it from your local `.env` or copy the current anon key from the
+> Supabase dashboard before running the commands:
+>
+> ```bash
+> export NEXT_PUBLIC_SUPABASE_ANON_KEY="sb_publishable_..."
+> ```
 
 ---
 
@@ -65,7 +73,7 @@ WHERE  is_admin = TRUE;
 -- 1d. Confirm anon-access state — should return [] after 004, rows before 004
 -- (Run from an HTTP client; this query alone won't reveal anon exposure)
 -- curl -s "https://gaavynmmysdhovpatzlp.supabase.co/rest/v1/nodes?select=id&limit=1" \
---      -H "apikey: sb_publishable_1BPrFxSYIb__I7JZUbgimQ_RZcVR_oU"
+--      -H "apikey: $NEXT_PUBLIC_SUPABASE_ANON_KEY"
 ```
 
 **Interpreting results:**
@@ -192,7 +200,7 @@ COMMIT;
 ```bash
 # Nodes still require auth (004 still in effect)
 curl -s "https://gaavynmmysdhovpatzlp.supabase.co/rest/v1/nodes?select=id&limit=1" \
-     -H "apikey: sb_publishable_1BPrFxSYIb__I7JZUbgimQ_RZcVR_oU"
+     -H "apikey: $NEXT_PUBLIC_SUPABASE_ANON_KEY"
 # Expected: [] (empty — not blocked by 401, silently filtered by RLS)
 ```
 
@@ -282,7 +290,7 @@ COMMIT;
 ```bash
 # After rolling back 004, nodes will be readable by anon again:
 curl -s "https://gaavynmmysdhovpatzlp.supabase.co/rest/v1/nodes?select=id,name&limit=3" \
-     -H "apikey: sb_publishable_1BPrFxSYIb__I7JZUbgimQ_RZcVR_oU"
+     -H "apikey: $NEXT_PUBLIC_SUPABASE_ANON_KEY"
 # If this returns rows, anon exposure is confirmed — re-apply 004 immediately
 ```
 
@@ -350,7 +358,7 @@ All statements are idempotent — safe to run even if partially applied.
 **Verify after:**
 ```bash
 curl -s "https://gaavynmmysdhovpatzlp.supabase.co/rest/v1/nodes?select=id&limit=1" \
-     -H "apikey: sb_publishable_1BPrFxSYIb__I7JZUbgimQ_RZcVR_oU"
+     -H "apikey: $NEXT_PUBLIC_SUPABASE_ANON_KEY"
 # Expected: []
 ```
 

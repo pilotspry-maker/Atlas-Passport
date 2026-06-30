@@ -313,7 +313,7 @@ COMMIT;
 -- corridor_id is rejected:
 --
 --   PLAYER_JWT=<authenticated player JWT>
---   ANON=sb_publishable_1BPrFxSYIb__I7JZUbgimQ_RZcVR_oU
+--   ANON="$NEXT_PUBLIC_SUPABASE_ANON_KEY"   # from Vercel env or Supabase dashboard
 --   URL=https://gaavynmmysdhovpatzlp.supabase.co/rest/v1
 --   PLAYER_ID=<player UUID from JWT sub>
 --
