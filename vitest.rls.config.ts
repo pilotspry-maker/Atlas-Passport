@@ -27,9 +27,12 @@ export default defineConfig({
     include: ["tests/rls/exploits/**/*.test.ts"],
 
     // Sequential execution — tests share a live DB; parallel could
-    // produce race conditions on fixture rows
+    // produce race conditions on fixture rows.
+    // Vitest 4 removed `poolOptions.forks.singleFork`; the supported way to
+    // serialize file execution is top-level `fileParallelism: false`, which
+    // overrides maxWorkers to 1 and runs all test files in a single fork.
     pool: "forks",
-    poolOptions: { forks: { singleFork: true } },
+    fileParallelism: false,
 
     // 30-second timeout per test (network calls to Supabase)
     testTimeout: 30_000,
