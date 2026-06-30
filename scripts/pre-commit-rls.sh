@@ -38,6 +38,26 @@ if [ "$MIGRATION_CHANGED" = false ] && [ "$RLS_TEST_CHANGED" = false ]; then
   exit 0
 fi
 
+# ─── Static lint: Patterns A–D (fast, no Supabase required) ───────────────────
+# Runs the same lint that ships in .github/workflows/rls-pattern-lint.yml.
+# Static-only, no DB, so it can always run regardless of Docker/Supabase state.
+if [ "$MIGRATION_CHANGED" = true ] && [ -f scripts/rls-pattern-lint.mjs ]; then
+  echo "→ Static RLS pattern lint (Patterns A–D)…"
+  STAGED_MIGRATIONS=$(echo "$STAGED" | grep '^supabase/migrations/.*\.sql$' | tr '\n' ' ')
+  if [ -n "$STAGED_MIGRATIONS" ]; then
+    # shellcheck disable=SC2086
+    if ! node scripts/rls-pattern-lint.mjs $STAGED_MIGRATIONS; then
+      echo ""
+      echo "✗ RLS pattern lint found issues — commit blocked."
+      echo "  Reference: docs/rls_security_patterns.md"
+      echo "  To skip (emergency only): git commit --no-verify"
+      echo ""
+      exit 1
+    fi
+  fi
+  echo ""
+fi
+
 # ─── Run the regression suite ─────────────────────────────────────────────────
 echo ""
 echo "┌─────────────────────────────────────────────────────┐"

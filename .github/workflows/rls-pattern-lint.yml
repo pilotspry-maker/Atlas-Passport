@@ -1,0 +1,162 @@
+# .github/workflows/rls-pattern-lint.yml
+#
+# ════════════════════════════════════════════════════════════════════════════
+# RLS Recursion Pattern Lint — Atlas Passport
+# ════════════════════════════════════════════════════════════════════════════
+#
+# Runs on every pull request to main. Lints any changed
+# `supabase/migrations/*.sql` files against the four RLS recursion /
+# privilege-escalation patterns documented in
+# `docs/rls_security_patterns.md`:
+#
+#   Pattern A — RLS recursion seed (inline same-table subquery in policy)
+#   Pattern B — auth.uid() wrap mismatch (bare vs (select auth.uid()) drift)
+#   Pattern C — DROP of a guardrail policy without same-file recreation
+#   Pattern D — SECURITY DEFINER function missing SET search_path pin
+#
+# This job is a STATIC lint — it never touches a database. It runs before
+# the heavier `rls-exploit-tests.yml` and `rls-regression.yml` suites and
+# is intended to fail fast on patterns we already know cause HTTP 500 or
+# privilege escalation, so reviewers don't waste a CI cycle finding them.
+#
+# Gate logic:
+#   • 0 findings → green, silent.
+#   • ≥1 finding → red, with one inline ::error annotation per finding
+#     (clickable in the PR Files-changed view) AND a step-summary table
+#     linking each finding back to the docs anchor that explains it.
+#
+# Each finding links to the corresponding section of
+# docs/rls_security_patterns.md so the author can read the fix recipe
+# without bouncing between repos.
+#
+# The same script is also wired into `scripts/pre-commit-rls.sh` so the
+# lint runs locally before push.
+#
+# Companion crons (post findings to issue #43 between PR reviews):
+#   • Monday RLS recursion sentinel — cron 549768ec (merged migrations)
+#   • Nightly open-PR scanner       — cron e595a672 (open PRs)
+# ════════════════════════════════════════════════════════════════════════════
+
+name: RLS Pattern Lint
+
+on:
+  pull_request:
+    branches:
+      - main
+    paths:
+      - "supabase/migrations/**.sql"
+      - "scripts/rls-pattern-lint.mjs"
+      - ".github/workflows/rls-pattern-lint.yml"
+
+permissions:
+  contents: read
+  pull-requests: write # for the optional sticky-comment step
+
+concurrency:
+  group: rls-pattern-lint-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  lint:
+    name: Lint changed migrations
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+
+    steps:
+      - name: Checkout PR head with full history
+        uses: actions/checkout@v4
+        with:
+          # We need the merge-base with main so the script can diff against it.
+          fetch-depth: 0
+          ref: ${{ github.event.pull_request.head.sha }}
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+
+      - name: Resolve PR base SHA
+        id: base
+        run: |
+          BASE_SHA="${{ github.event.pull_request.base.sha }}"
+          echo "sha=$BASE_SHA" >> "$GITHUB_OUTPUT"
+          echo "Base SHA: $BASE_SHA"
+
+      - name: List changed migration files
+        id: changed
+        run: |
+          CHANGED=$(git diff --name-only --diff-filter=AMR \
+            "${{ steps.base.outputs.sha }}...HEAD" \
+            -- 'supabase/migrations/*.sql' | tr '\n' ' ')
+          echo "files=$CHANGED" >> "$GITHUB_OUTPUT"
+          if [ -z "$CHANGED" ]; then
+            echo "::notice title=RLS Pattern Lint::No migration files changed in this PR; skipping lint."
+          else
+            echo "Changed migrations: $CHANGED"
+          fi
+
+      - name: Run RLS pattern lint (human-readable)
+        if: steps.changed.outputs.files != ''
+        id: lint
+        env:
+          GITHUB_ACTIONS: "true"
+        run: |
+          node scripts/rls-pattern-lint.mjs --changed "${{ steps.base.outputs.sha }}"
+
+      - name: Run RLS pattern lint (JSON for step summary)
+        if: always() && steps.changed.outputs.files != ''
+        id: lint_json
+        env:
+          GITHUB_ACTIONS: "false"
+        run: |
+          set +e
+          node scripts/rls-pattern-lint.mjs \
+            --changed "${{ steps.base.outputs.sha }}" \
+            --json > /tmp/rls-lint.json
+          echo "exit_code=$?" >> "$GITHUB_OUTPUT"
+
+      - name: Build step summary
+        if: always() && steps.changed.outputs.files != ''
+        run: |
+          if [ ! -f /tmp/rls-lint.json ]; then exit 0; fi
+          COUNT=$(node -e "const j=require('/tmp/rls-lint.json'); console.log(j.findings.length)")
+          SCANNED=$(node -e "const j=require('/tmp/rls-lint.json'); console.log(j.scanned)")
+          {
+            echo "## 🛡️ RLS Pattern Lint"
+            echo ""
+            echo "**Migrations scanned:** $SCANNED"
+            echo "**Findings:** $COUNT"
+            echo ""
+            echo "**Reference:** [docs/rls_security_patterns.md](https://github.com/pilotspry-maker/Atlas-Passport/blob/main/docs/rls_security_patterns.md)"
+            echo ""
+            if [ "$COUNT" -eq 0 ]; then
+              echo "✅ No findings. Changed migrations pass Patterns A–D."
+            else
+              echo "| Pattern | File | Line | Title | Docs |"
+              echo "|---|---|---|---|---|"
+              node -e "
+                const j = require('/tmp/rls-lint.json');
+                for (const f of j.findings) {
+                  const title = f.title.replace(/\|/g, '\\\\|');
+                  console.log(\`| \${f.pattern} | \\\`\${f.file}\\\` | \${f.line} | \${title} | [link](\${f.docs}) |\`);
+                }
+              "
+              echo ""
+              echo "### How to fix"
+              echo ""
+              echo "1. Click the docs link for each finding to read the fix recipe."
+              echo "2. Patterns A & B are usually fixed by a \`SECURITY DEFINER\` helper (see migration 034 / PR #46)."
+              echo "3. Pattern C: pair every \`DROP POLICY\` of a guardrail name with a \`CREATE POLICY\` in the same file."
+              echo "4. Pattern D: add \`SET search_path = ''\` to the function and fully-qualify every table reference inside."
+              echo "5. After fixing, push again — this lint reruns automatically."
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload lint JSON as artifact
+        if: always() && steps.changed.outputs.files != ''
+        uses: actions/upload-artifact@v4
+        with:
+          name: rls-pattern-lint-findings
+          path: /tmp/rls-lint.json
+          retention-days: 14
+          if-no-files-found: ignore
