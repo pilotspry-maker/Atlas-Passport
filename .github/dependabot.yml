@@ -10,6 +10,18 @@ updates:
       time: "09:00"
       timezone: "America/New_York"
     open-pull-requests-limit: 5
+    # ----------------------------------------------------------------
+    # Ignore ESLint major-version bumps until eslint-config-next ships
+    # stable ESLint 10 support. The transitively-installed
+    # eslint-plugin-react@7.37.x calls context.getFilename(), which was
+    # removed in ESLint 10, so a major bump breaks `npm run lint` on
+    # every PR until upstream catches up.
+    # Track: vercel/next.js#91710 (eslint-config-next 16.3.0 stable).
+    # Remove this block once eslint-config-next >=16.3.0 is published.
+    # ----------------------------------------------------------------
+    ignore:
+      - dependency-name: "eslint"
+        update-types: ["version-update:semver-major"]
     groups:
       next-ecosystem:
         patterns:
