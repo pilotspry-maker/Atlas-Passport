@@ -1,9 +1,8 @@
 # Atlas Passport — Operating Manual for Claude
 
-> **Last updated:** 2026-06-29 — adds Section 11.5 (Cron Standards) pointing to `docs/ATLAS_CRON_STANDARDS.md` after the 2026-06-28 credential-prompt incident. Previous: 2026-06-27 post-launch refresh (launch status, Coworker host duty, Orion-in-Supabase contract, launch-window operational infrastructure).
-> **Previous revision:** 2026-06-25 (RLS + dependency audit findings).
-> **Active security branch:** `fix/005-rls-exploit-patches` ([PR #18](https://github.com/pilotspry-maker/Atlas-Passport/pull/18))
-> **Status:** PR #18 is the working branch. Do not branch off `main` until #18 is merged.
+> **Last updated:** 2026-06-30 — 2026-06-30 coworker handoff: adds atlas-ops/finish-lockdown.sh (PR #81), migration 041, passports_update_own guard (migration 042), and §14 cleanup. Previous: 2026-06-29 (Section 11.5 Cron Standards, migrations 037–040 via PR #53).
+> **Previous revision:** 2026-06-29 (migrations 037–040; Section 11.5).
+> **Status:** `main` is the active branch. All launch-critical migrations (001–042) are applied. No active security PRs blocking new work.
 
 Real-world travel activation game by Relevant Artist. Users collect stamped check-ins across city corridors within a 72-hour window.
 
@@ -235,8 +234,10 @@ Apply in order via Supabase SQL Editor or CLI. All migrations are idempotent.
 | 038 | `038_restrict_corridor_covers_bucket.sql` | Task 4: set `corridor-covers` bucket `public = FALSE`; drop open `corridor_covers_select_public`; add `corridor_covers_select_auth` (authenticated SELECT) and `corridor_covers_insert_admin` (authenticated INSERT, gated by admin route) | ✅ applied (2026-06-29, PR #53) |
 | 039 | `039_wrap_auth_uid_initplan.sql` | Task 6: wrap bare `auth.uid()` in `(select auth.uid())` to enable initplan caching (Supabase advisor `auth_rls_initplan`); adds `public.committed_is_admin(uuid)` SECURITY DEFINER helper; rewrites 5 policies (incl. `profiles_update_own`, `passports_insert_own`) to remove recursive subquery from PR #46 | ✅ applied (2026-06-29, PR #53) |
 | 040 | `040_covering_fk_indexes.sql` | Task 7: add 11 covering indexes on unindexed FK columns (`passports.corridor_id`, `check_ins.node_id`, `rewards.corridor_id`, Orion event tables) to eliminate sequential scans on CASCADE and JOIN queries (Supabase advisor `unindexed_foreign_keys`) | ✅ applied (2026-06-29, PR #53) |
+| 041 | `041_restore_public_stats_anon_execute.sql` | Restore anon/authenticated EXECUTE on `get_public_stats()` — migration 034 erroneously revoked it, breaking the public dashboard (`public_stats` view is SECURITY INVOKER and calls the RPC internally) | ✅ applied (2026-06-30, PR #65) |
+| 042 | `042_passports_update_guard.sql` | Add explicit `passports_update_own` UPDATE policy for authenticated users — locks user_id, corridor_id, expires_at, and activated_at as immutable; blocks anon/public UPDATE entirely (the 2026-06-29 exploit class) | ✅ applied (2026-06-30, PR #83) |
 
-**Status as of 2026-06-30:** All migrations 001–040 are applied to production, verified by direct introspection of `pg_proc`, `pg_policies`, `pg_trigger`, `information_schema.columns`, and `has_function_privilege(service_role, ...)` against project `gaavynmmysdhovpatzlp`. The 2026-06-27 → 2026-06-29 launch-protection sweep applied 018–036; PR #53 (2026-06-29) added 037–040. Migrations 004–5, 007, 009–10, 013–17 were marked PENDING in earlier revisions of this document but were already live — the markers were stale, not the migrations.
+**Status as of 2026-06-30:** All migrations 001–042 are applied to production, verified by direct introspection of `pg_proc`, `pg_policies`, `pg_trigger`, `information_schema.columns`, and `has_function_privilege(service_role, ...)` against project `gaavynmmysdhovpatzlp`. The 2026-06-27 → 2026-06-29 launch-protection sweep applied 018–036; PR #53 (2026-06-29) added 037–040; PR #65 added 041; PR #83 added 042. Migrations 004–5, 007, 009–10, 013–17 were marked PENDING in earlier revisions of this document but were already live — the markers were stale, not the migrations.
 
 **Sentinel checks** to verify post-apply:
 - `POST /rpc/create_test_users` → 200
@@ -496,16 +497,13 @@ Only grant `anon` or `authenticated` to a SECURITY DEFINER function if it is exp
 | **Run `atlas-ops/finish-lockdown.sh`** from local machine | Operator | Rotates VERCEL_TOKEN, SUPABASE_SERVICE_ROLE_KEY, RESEND_API_KEY. Pull branch, then: `HISTFILE=/dev/null bash ./atlas-ops/finish-lockdown.sh` |
 | **Revoke old RESEND key** `re_JC6PSzFE_…` at resend.com | Operator | After finish-lockdown.sh confirms email smoke test passes |
 | Update GitHub Actions secret `SUPABASE_SERVICE_ROLE_KEY` | Operator | Stale value caused 2026-06-27 CI red. Paste current service_role JWT from Supabase dashboard, re-run failed workflow. Superseded by finish-lockdown.sh once run. |
-| Apply migrations 004 → 008 to production | Operator (manual SQL paste) | Combined file ready |
-| Re-run CI on PR #18 | Auto on push | Should pass once migrations + secret are live |
-| Merge PR #18 | Operator | Use `enforce_admins` bypass flow |
-| Add required status checks to `main` | Operator | GitHub → Settings → Branches |
+| Add required status checks to `main` | Operator | GitHub → Settings → Branches → add `RLS Exploit Tests` + `Lint · Build · Bundle Size` as required |
 | Upgrade `next` to `^15.5.19` | Claude | Test RSC pages, auth callback, cron route |
 | Pin `ws` to `^8.21.0` | Claude | `package.json` overrides |
 | Upgrade `@supabase/ssr` to `^0.12.0` | Claude | Codebase already forward-compatible |
 | Enrich 14 DC corridor nodes | Operator | Sequence, address, hint, description, coordinates |
 | Verify Resend SPF + DKIM | Operator | Pre-launch gate |
-| PWA + Capacitor track | Branch `feat/pwa-ios-capacitor` | Resume after PR #18 merge |
+| PWA + Capacitor track | Branch `feat/pwa-ios-capacitor` | Resume when operator is ready |
 | DST flip on cron `84869e59` | Operator (late Oct 2026) | Change `5 11 * * 1-5` → `5 12 * * 1-5` when EST returns |
 | Decide whether to make `pilotspry@gmail.com` → `ramon@relevant-artist.com` cutover happen | Operator | Currently parked indefinitely |
 
