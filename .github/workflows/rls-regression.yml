@@ -64,6 +64,11 @@ jobs:
   seed-regression-fixtures:
     name: Seed Regression Fixtures
     runs-on: ubuntu-latest
+    # ------------------------------------------------------------------
+    # Skip for Dependabot PRs (no secret access on pull_request events).
+    # Passthrough `seed-regression-fixtures-skip` reports the check.
+    # ------------------------------------------------------------------
+    if: github.actor != 'dependabot[bot]'
     permissions:
       contents: read
 
@@ -631,6 +636,10 @@ jobs:
     name: RLS Regression Tests (reg-01 → reg-04)
     runs-on: ubuntu-latest
     needs: seed-regression-fixtures
+    # ------------------------------------------------------------------
+    # Skip for Dependabot PRs. Real coverage runs on push to main.
+    # ------------------------------------------------------------------
+    if: github.actor != 'dependabot[bot]'
     permissions:
       contents: read
       pull-requests: write
@@ -812,3 +821,27 @@ jobs:
             - reg-04 · Policy inventory and RLS structure validated
 
             <sub>RLS Regression Tests · `rls-regression.yml`</sub>
+
+
+  # ============================================================================
+  # Dependabot passthrough jobs
+  # ============================================================================
+  seed-regression-fixtures-skip:
+    name: Seed Regression Fixtures
+    runs-on: ubuntu-latest
+    if: github.actor == 'dependabot[bot]'
+    steps:
+      - name: Skip (Dependabot PR - no secret access)
+        run: |
+          echo "Skipping regression fixture seeding for Dependabot PR."
+
+  rls-regression-tests-skip:
+    name: RLS Regression Tests (reg-01 → reg-04)
+    runs-on: ubuntu-latest
+    needs: seed-regression-fixtures-skip
+    if: github.actor == 'dependabot[bot]'
+    steps:
+      - name: Skip (Dependabot PR - no secret access)
+        run: |
+          echo "Skipping RLS regression suite for Dependabot PR."
+          echo "Full suite re-runs on push to main after merge."
