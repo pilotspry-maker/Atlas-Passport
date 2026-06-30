@@ -5,6 +5,9 @@ on:
   pull_request:
     branches:
       - main
+  # Manual re-trigger for any branch. Useful when the proxy drops a
+  # pull_request synchronize event.
+  workflow_dispatch:
 
 concurrency:
   group: ci-${{ github.ref }}
