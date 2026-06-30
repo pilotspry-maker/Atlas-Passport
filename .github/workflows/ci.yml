@@ -25,7 +25,7 @@ jobs:
 
       # ── 2. Node.js ───────────────────────────────────────────────────────────
       - name: Set up Node.js 24
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v6
         with:
           node-version: '24'
 
@@ -345,6 +345,20 @@ jobs:
               "user_id": p2_id, "corridor_id": CORRIDOR_ID,
               "status": "complete",
           }, p2_jwt)
+
+          # ── e) Reset passport.reward_claimed to false ────────────────────────
+          # Tests 3b/3c in exploit-03-reward-reclaim.test.ts deliberately set
+          # reward_claimed=true via service role. The check_reward_claimed_immutable
+          # trigger (migration 005) then blocks any true→false reversal, leaving
+          # the row stuck at true across CI runs. The NEXT run's test 3a then
+          # fails its ground-truth assertion (expects false, sees true).
+          #
+          # seed_ci_passports() is a SECURITY DEFINER RPC (migration 036) that
+          # uses SET LOCAL session_replication_role = replica to bypass the
+          # trigger and reset reward_claimed=false. Must run AFTER the passport
+          # upserts above so the rows exist.
+          print("Resetting reward_claimed via rpc/seed_ci_passports...")
+          rpc("seed_ci_passports")
 
           print("Fixtures seeded.")
           EOF
