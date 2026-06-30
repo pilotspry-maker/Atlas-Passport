@@ -1,0 +1,55 @@
+# .github/workflows/rls-drift-watch.yml
+# Weekday 08:00 America/New_York (UTC 12:00) RLS policy-definition drift watch.
+# Posts to #launch-ops Slack only when deviations are found; exits silently otherwise.
+# Required secrets: SUPABASE_DB_URL, SLACK_WEBHOOK_URL
+name: RLS Drift Watch
+
+on:
+  schedule:
+    - cron: "0 12 * * 1-5"   # 08:00 America/New_York (EDT) — adjust to "0 13" when EST returns
+  workflow_dispatch: {}
+
+concurrency:
+  group: rls-drift-watch
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  drift-watch:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install postgresql-client
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends postgresql-client
+
+      - name: Verify required secrets present
+        env:
+          SUPABASE_DB_URL: ${{ secrets.SUPABASE_DB_URL }}
+          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+        run: |
+          if [ -z "${SUPABASE_DB_URL:-}" ]; then
+            echo "::error::SUPABASE_DB_URL is not set — add it under Settings → Secrets and variables → Actions"
+            exit 1
+          fi
+          if [ -z "${SLACK_WEBHOOK_URL:-}" ]; then
+            echo "::error::SLACK_WEBHOOK_URL is not set — add it under Settings → Secrets and variables → Actions"
+            exit 1
+          fi
+
+      - name: Run drift watch
+        env:
+          SUPABASE_DB_URL: ${{ secrets.SUPABASE_DB_URL }}
+          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+          GH_TOKEN: ${{ github.token }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+        run: |
+          chmod +x scripts/rls_drift_watch.sh
+          scripts/rls_drift_watch.sh
