@@ -763,7 +763,7 @@ jobs:
       # ── Post failure comment on PR ────────────────────────────────────────
       - name: Post failure comment on PR
         if: failure() && github.event_name == 'pull_request'
-        uses: marocchino/sticky-pull-request-comment@v2
+        uses: marocchino/sticky-pull-request-comment@v3
         with:
           header: rls-regression-report
           message: |
@@ -805,7 +805,7 @@ jobs:
       # ── Clear success comment ──────────────────────────────────────────────
       - name: Clear failure comment (tests now passing)
         if: success() && github.event_name == 'pull_request'
-        uses: marocchino/sticky-pull-request-comment@v2
+        uses: marocchino/sticky-pull-request-comment@v3
         with:
           header: rls-regression-report
           message: |
