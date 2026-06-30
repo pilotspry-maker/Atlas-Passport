@@ -209,8 +209,12 @@ Apply in order via Supabase SQL Editor or CLI. All migrations are idempotent.
 | 016 | `016_create_exploit_test_users.sql` | `create_exploit_test_users()` — creates `player_one_rls`/`player_two_rls` with deterministic UUIDs + NULL fix | ⏳ **PENDING** |
 | 017 | `017_grant_service_role_seed_functions.sql` | `GRANT EXECUTE … TO service_role` for all 8 CI seed functions locked on 2026-06-26 | ⏳ **PENDING** |
 | ops-1 | `ops_001_dev_env_status.sql` (applied 2026-06-27) | `public.dev_env_status` table for the weekday morning env-check feed | ✅ applied |
+| 037 | `037_tighten_orion_insert_policies.sql` | Task 2: drop open `Service inserts *` policies on `ap_events` and `referral_events` (service_role is BYPASSRLS, no insert policy needed); baseline `waitlist_entries` with email-format CHECK constraint and rescoped INSERT policy for anon + authenticated | ✅ applied (2026-06-29, PR #53) |
+| 038 | `038_restrict_corridor_covers_bucket.sql` | Task 4: set `corridor-covers` bucket `public = FALSE`; drop open `corridor_covers_select_public`; add `corridor_covers_select_auth` (authenticated SELECT) and `corridor_covers_insert_admin` (authenticated INSERT, gated by admin route) | ✅ applied (2026-06-29, PR #53) |
+| 039 | `039_wrap_auth_uid_initplan.sql` | Task 6: wrap bare `auth.uid()` in `(select auth.uid())` to enable initplan caching (Supabase advisor `auth_rls_initplan`); adds `public.committed_is_admin(uuid)` SECURITY DEFINER helper; rewrites 5 policies (incl. `profiles_update_own`, `passports_insert_own`) to remove recursive subquery from PR #46 | ✅ applied (2026-06-29, PR #53) |
+| 040 | `040_covering_fk_indexes.sql` | Task 7: add 11 covering indexes on unindexed FK columns (`passports.corridor_id`, `check_ins.node_id`, `rewards.corridor_id`, Orion event tables) to eliminate sequential scans on CASCADE and JOIN queries (Supabase advisor `unindexed_foreign_keys`) | ✅ applied (2026-06-29, PR #53) |
 
-**Apply order for CI to pass:** 014 → 015 → 016 → 017 (then 004, 005, 007 for RLS assertions to pass).
+**Apply order for CI to pass:** 014 → 015 → 016 → 017 (then 004, 005, 007 for RLS assertions to pass). Migrations 037–040 from PR #53 are already applied to production.
 
 **Sentinel checks** to verify post-apply:
 - `POST /rpc/create_test_users` → 200
