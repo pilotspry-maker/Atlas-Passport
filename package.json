@@ -23,9 +23,7 @@
     "lint:rls-patterns": "node scripts/rls-pattern-lint.mjs",
     "lint:rls-patterns:changed": "node scripts/rls-pattern-lint.mjs --changed origin/main",
     "lint:rls-patterns:json": "node scripts/rls-pattern-lint.mjs --json",
-    "prepare": "if [ -d .git ]; then cp scripts/pre-commit-rls.sh .git/hooks/pre-commit && chmod +x .git/hooks/pre-commit; fi",
-    "test:unit": "vitest run --config vitest.unit.config.ts",
-    "test:unit:watch": "vitest --config vitest.unit.config.ts"
+    "prepare": "if [ -d .git ]; then cp scripts/pre-commit-rls.sh .git/hooks/pre-commit && chmod +x .git/hooks/pre-commit; fi"
   },
   "dependencies": {
     "@react-email/code-block": "^0.2.1",
@@ -44,10 +42,10 @@
     "tailwind-merge": "^2.4.0"
   },
   "devDependencies": {
-    "@types/node": "^24.13.2",
+    "@types/node": "^26.0.1",
     "@types/react": "^19.2.17",
     "@types/react-dom": "^19.2.3",
-    "autoprefixer": "^10.4.19",
+    "autoprefixer": "^10.5.2",
     "eslint": "~9.39.4",
     "eslint-config-next": "^16.2.9",
     "eslint-plugin-react": "~7.37.5",
