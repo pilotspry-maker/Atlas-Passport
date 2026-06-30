@@ -194,20 +194,20 @@ Apply in order via Supabase SQL Editor or CLI. All migrations are idempotent.
 | 001 | `001_initial_schema.sql` | All tables, RLS, trigger | ✅ applied |
 | 002 | `002_storage_and_realtime.sql` | Storage policies | ✅ applied |
 | 003 | `003_profile_referral_code.sql` | `profiles.referral_code` | ✅ applied |
-| 004 | `004_repair_migration.sql` | Schema repair — `rewards.name`, `rewards.claimed`, storage policies | ⏳ **PENDING** |
-| 005 | `005_rls_exploit_patches.sql` | `profiles_update_own` is_admin freeze; `check_ins_insert_own` ownership guard | ⏳ **PENDING** |
+| 004 | `004_repair_migration.sql` | Idempotent schema repair: `ADD COLUMN IF NOT EXISTS` on `nodes` (sequence, latitude, longitude, hint, is_active) and `corridors`; create `passports` + `rewards` if missing; patch `check_ins` columns; backfill storage policies | ✅ applied (verified 2026-06-30) |
+| 005 | `005_rls_exploit_patches.sql` | `profiles_update_own` is_admin freeze; `check_ins_insert_own` passport-ownership guard; `prevent_reward_unclaim()` + `check_reward_claimed_immutable` BEFORE-UPDATE trigger on `passports` | ✅ applied (verified 2026-06-30) |
 | 006 | `006_test_helpers.sql` | `confirm_test_users`, `seed_ci_fixtures`, `seed_ci_fixtures_v2` RPCs | ✅ applied (CI confirmed) |
-| 007 | `007_rls_column_guards.sql` | `passports_insert_own` corridor guard; `check_ins_player_view` SECURITY BARRIER | ⏳ **PENDING** |
+| 007 | `007_rls_column_guards.sql` | `passports_insert_own` active-corridor guard (EXISTS subquery); `check_ins_player_view` SECURITY BARRIER view excluding `reviewed_by` | ✅ applied (verified 2026-06-30) |
 | 008 | `008_create_test_users_helper.sql` | `create_test_users()` — original CI helper (superseded by 011–013) | ✅ applied (CI confirmed) |
-| 009 | `009_create_regression_users.sql` | `create_regression_users()` — regression suite users | ⏳ **PENDING** |
-| 010 | `010_fix_null_token_columns.sql` | COALESCE patch for null token columns in existing users | ⏳ **PENDING** |
+| 009 | `009_create_regression_users.sql` | `create_regression_users()` — regression suite users (later superseded by 028/029) | ✅ applied (verified 2026-06-30) |
+| 010 | `010_fix_null_token_columns.sql` | COALESCE patch for NULL token columns in existing users (verified: no NULL token cols remain on `@test.atlasci.com` users) | ✅ applied (verified 2026-06-30) |
 | 011 | `011_refresh_ci_user_functions.sql` | Refresh both CI user helpers + auth.identities row for GoTrue v2 | ✅ applied |
 | 012 | `012_add_email_change_to_ci_users.sql` | Add `email_change=''` and `phone=''` to CI user INSERT | ✅ applied |
-| 013 | `013_add_phone_change_to_ci_users.sql` | Add `phone_change=''` to CI user INSERT (GoTrue PhoneChange fix) | ⏳ **PENDING** |
-| 014 | `014_comprehensive_null_fix_ci_users.sql` | Dynamic loop fixes ALL nullable text columns — supersedes 011–013 NULL guessing | ⏳ **PENDING** |
-| 015 | `015_seed_ci_passports_helper.sql` | `seed_ci_passports()` + `seed_regression_passports()` SECURITY DEFINER RPCs — bypass passports RLS on INSERT | ⏳ **PENDING** |
-| 016 | `016_create_exploit_test_users.sql` | `create_exploit_test_users()` — creates `player_one_rls`/`player_two_rls` with deterministic UUIDs + NULL fix | ⏳ **PENDING** |
-| 017 | `017_grant_service_role_seed_functions.sql` | `GRANT EXECUTE … TO service_role` for all 8 CI seed functions locked on 2026-06-26 | ⏳ **PENDING** |
+| 013 | `013_add_phone_change_to_ci_users.sql` | Add `phone_change=''` to CI user INSERT (GoTrue PhoneChange fix) | ✅ applied (verified 2026-06-30) |
+| 014 | `014_comprehensive_null_fix_ci_users.sql` | Dynamic loop fixes ALL nullable text columns — supersedes 011–013 NULL guessing (verified: `create_test_users` body contains the `information_schema.columns` loop) | ✅ applied (verified 2026-06-30) |
+| 015 | `015_seed_ci_passports_helper.sql` | `seed_ci_passports()` + `seed_regression_passports()` SECURITY DEFINER RPCs — bypass passports RLS on INSERT | ✅ applied (verified 2026-06-30) |
+| 016 | `016_create_exploit_test_users.sql` | `create_exploit_test_users()` — creates `player_one_rls`/`player_two_rls` with deterministic UUIDs + NULL fix | ✅ applied (verified 2026-06-30) |
+| 017 | `017_grant_service_role_seed_functions.sql` | `GRANT EXECUTE … TO service_role` for all 8 CI seed functions locked on 2026-06-26 (verified: service_role has EXECUTE on `create_test_users`, `create_exploit_test_users`, `create_regression_users`, `seed_ci_passports`, `seed_regression_passports`, `confirm_test_users`) | ✅ applied (verified 2026-06-30) |
 | ops-1 | `ops_001_dev_env_status.sql` (applied 2026-06-27) | `public.dev_env_status` table for the weekday morning env-check feed | ✅ applied |
 | 018 | `018_pin_handle_new_user_search_path.sql` | Pin `SET search_path = public` on the `handle_new_user()` SECURITY DEFINER trigger to close the search-path injection CVE vector; function body unchanged | ✅ applied |
 | 019 | `019_verify_service_role_permissions.sql` | `verify_service_role_permissions()` SECURITY DEFINER introspection RPC — read-only pg_catalog grant metadata, EXECUTE granted only to service_role; CI pre-flight to diagnose PostgREST 42501 on seed RPCs | ✅ applied |
@@ -233,7 +233,7 @@ Apply in order via Supabase SQL Editor or CLI. All migrations are idempotent.
 | 039 | `039_wrap_auth_uid_initplan.sql` | Task 6: wrap bare `auth.uid()` in `(select auth.uid())` to enable initplan caching (Supabase advisor `auth_rls_initplan`); adds `public.committed_is_admin(uuid)` SECURITY DEFINER helper; rewrites 5 policies (incl. `profiles_update_own`, `passports_insert_own`) to remove recursive subquery from PR #46 | ✅ applied (2026-06-29, PR #53) |
 | 040 | `040_covering_fk_indexes.sql` | Task 7: add 11 covering indexes on unindexed FK columns (`passports.corridor_id`, `check_ins.node_id`, `rewards.corridor_id`, Orion event tables) to eliminate sequential scans on CASCADE and JOIN queries (Supabase advisor `unindexed_foreign_keys`) | ✅ applied (2026-06-29, PR #53) |
 
-**Apply order for CI to pass:** 014 → 015 → 016 → 017 (then 004, 005, 007 for RLS assertions to pass). Migrations 018–040 are already applied to production (018–036 over the 2026-06-27 → 2026-06-29 launch-protection sweep; 037–040 via PR #53).
+**Status as of 2026-06-30:** All migrations 001–040 are applied to production, verified by direct introspection of `pg_proc`, `pg_policies`, `pg_trigger`, `information_schema.columns`, and `has_function_privilege(service_role, ...)` against project `gaavynmmysdhovpatzlp`. The 2026-06-27 → 2026-06-29 launch-protection sweep applied 018–036; PR #53 (2026-06-29) added 037–040. Migrations 004–5, 007, 009–10, 013–17 were marked PENDING in earlier revisions of this document but were already live — the markers were stale, not the migrations.
 
 **Sentinel checks** to verify post-apply:
 - `POST /rpc/create_test_users` → 200
