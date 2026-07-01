@@ -1,0 +1,28 @@
+# CODEOWNERS — pinned reviewer surface for pilotspry-maker/Atlas-Passport
+#
+# Purpose: prevent bot / AI coworker (Dispatch) or leaked tokens from
+# self-merging changes to main. Combined with:
+#   - required_approving_review_count = 1
+#   - require_code_owner_reviews = true
+#   - restrictions.users = ["pilotspry-maker"] on main
+# this forces a human review by @pilotspry-maker for every PR touching
+# the paths below.
+#
+# See docs/ops/branch_protection_plan.md for the full plan.
+# See docs/dispatch_runbook.md §4 / §6 for the policy this enforces.
+
+# Default owner — every file in the repo requires @pilotspry-maker review.
+*                                       @pilotspry-maker
+
+# High-sensitivity paths (redundant with * but explicit for clarity;
+# also so any future entry above them can't accidentally remove
+# ownership on these paths).
+/supabase/migrations/**                 @pilotspry-maker
+/.github/workflows/**                   @pilotspry-maker
+/.github/CODEOWNERS                     @pilotspry-maker
+/.github/branch-protection.expected.json @pilotspry-maker
+/.github/branch-protection.baseline.json @pilotspry-maker
+/docs/dispatch_runbook.md               @pilotspry-maker
+/docs/ops/branch_protection_plan.md     @pilotspry-maker
+/CLAUDE.md                              @pilotspry-maker
+/scripts/ops/**                         @pilotspry-maker

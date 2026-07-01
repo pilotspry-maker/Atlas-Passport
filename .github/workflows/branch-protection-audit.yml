@@ -1,0 +1,135 @@
+# .github/workflows/branch-protection-audit.yml
+# Audit that branch protection on main matches .github/branch-protection.expected.json.
+# Runs on push to main and weekly. Posts drift to #launch-ops if SLACK_WEBHOOK_URL is set.
+# Non-enforcing: reports only. See docs/ops/branch_protection_plan.md.
+
+name: Branch Protection Audit
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/branch-protection.expected.json'
+      - '.github/branch-protection.baseline.json'
+      - '.github/workflows/branch-protection-audit.yml'
+      - '.github/CODEOWNERS'
+  schedule:
+    # Mondays 12:15 UTC = 08:15 America/New_York during EDT.
+    # (DST swap to 13:15 UTC when EST resumes late Oct 2026.)
+    - cron: '15 12 * * 1'
+  workflow_dispatch: {}
+
+concurrency:
+  group: branch-protection-audit
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Fetch live branch protection
+        id: live
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          gh api "repos/${{ github.repository }}/branches/main/protection" \
+            > /tmp/live.json
+          echo "captured=1" >> "$GITHUB_OUTPUT"
+
+      - name: Compare against expected
+        id: diff
+        run: |
+          set -euo pipefail
+
+          # Normalize live and expected into the same shape for comparison.
+          jq '{
+            required_status_checks: {
+              strict: .required_status_checks.strict,
+              contexts: (.required_status_checks.contexts | sort)
+            },
+            enforce_admins: .enforce_admins.enabled,
+            reviews: {
+              dismiss_stale_reviews: .required_pull_request_reviews.dismiss_stale_reviews,
+              require_code_owner_reviews: .required_pull_request_reviews.require_code_owner_reviews,
+              required_approving_review_count: .required_pull_request_reviews.required_approving_review_count,
+              require_last_push_approval: .required_pull_request_reviews.require_last_push_approval
+            },
+            restrictions: (.restrictions | if . == null then null else {
+              users: [.users[].login] | sort,
+              teams: [.teams[].slug] | sort,
+              apps:  [.apps[].slug]  | sort
+            } end),
+            required_linear_history: .required_linear_history.enabled,
+            allow_force_pushes: .allow_force_pushes.enabled,
+            allow_deletions: .allow_deletions.enabled,
+            required_conversation_resolution: .required_conversation_resolution.enabled,
+            lock_branch: .lock_branch.enabled
+          }' /tmp/live.json > /tmp/live.norm.json
+
+          jq '.protection | {
+            required_status_checks: {
+              strict: .required_status_checks.strict,
+              contexts: (.required_status_checks.contexts | sort)
+            },
+            enforce_admins: .enforce_admins,
+            reviews: .required_pull_request_reviews,
+            restrictions: (.restrictions | if . == null then null else {
+              users: (.users // [] | sort),
+              teams: (.teams // [] | sort),
+              apps:  (.apps  // [] | sort)
+            } end),
+            required_linear_history: .required_linear_history,
+            allow_force_pushes: .allow_force_pushes,
+            allow_deletions: .allow_deletions,
+            required_conversation_resolution: .required_conversation_resolution,
+            lock_branch: .lock_branch
+          }' .github/branch-protection.expected.json > /tmp/expected.norm.json
+
+          echo "=== Expected ==="
+          cat /tmp/expected.norm.json
+          echo ""
+          echo "=== Live ==="
+          cat /tmp/live.norm.json
+          echo ""
+
+          if diff -u /tmp/expected.norm.json /tmp/live.norm.json > /tmp/diff.txt; then
+            echo "status=clean" >> "$GITHUB_OUTPUT"
+            echo "Branch protection matches expected config."
+          else
+            echo "status=drift" >> "$GITHUB_OUTPUT"
+            {
+              echo "diff<<DIFFEOF"
+              cat /tmp/diff.txt
+              echo "DIFFEOF"
+            } >> "$GITHUB_OUTPUT"
+            echo "::warning::Branch protection drift detected — see diff above."
+          fi
+
+      - name: Notify Slack on drift
+        if: steps.diff.outputs.status == 'drift'
+        env:
+          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          set -euo pipefail
+          if [[ -z "${SLACK_WEBHOOK_URL:-}" ]]; then
+            echo "SLACK_WEBHOOK_URL not set — skipping Slack notification (workflow still fails)."
+            exit 1
+          fi
+          payload=$(jq -n -c \
+            --arg title "🚨 Branch protection drift on main" \
+            --arg body  "$(cat /tmp/diff.txt | head -40)" \
+            --arg url   "$RUN_URL" \
+            '{text: $title, attachments: [{color:"#e01e5a", title:"Diff (truncated)", text: $body, actions: [{type:"button", text:"Run", url:$url}]}]}')
+          curl -sS -X POST -H 'Content-Type: application/json' \
+            --data "$payload" "$SLACK_WEBHOOK_URL" > /dev/null
+          # Fail red so the drift is visible in Actions history too.
+          exit 1
