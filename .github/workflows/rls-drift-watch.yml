@@ -40,8 +40,7 @@ jobs:
             exit 1
           fi
           if [ -z "${SLACK_WEBHOOK_URL:-}" ]; then
-            echo "::error::SLACK_WEBHOOK_URL is not set — add it under Settings → Secrets and variables → Actions"
-            exit 1
+            echo "::warning::SLACK_WEBHOOK_URL is not set — Slack notifications disabled until secret is added"
           fi
 
       - name: Run drift watch
