@@ -1,0 +1,32 @@
+{
+  "_comment": "Snapshot of the branch-protection state on main as of 2026-07-01 15:30 UTC, BEFORE the hardening in docs/ops/branch_protection_plan.md is applied. Used by scripts/ops/apply-branch-protection.sh --rollback. Do not edit.",
+  "_captured_at": "2026-07-01T15:30:00Z",
+  "branch": "main",
+  "protection": {
+    "required_status_checks": {
+      "strict": true,
+      "contexts": [
+        "Verify required env vars in Vercel",
+        "Lint · Build · Bundle Size",
+        "RLS Regression Tests (reg-01 → reg-04)",
+        "RLS Exploit Tests"
+      ]
+    },
+    "enforce_admins": true,
+    "required_pull_request_reviews": {
+      "dismiss_stale_reviews": true,
+      "require_code_owner_reviews": false,
+      "required_approving_review_count": 0,
+      "require_last_push_approval": false
+    },
+    "restrictions": null,
+    "required_linear_history": false,
+    "allow_force_pushes": false,
+    "allow_deletions": false,
+    "required_conversation_resolution": false,
+    "lock_branch": false,
+    "allow_fork_syncing": false,
+    "block_creations": false,
+    "required_signatures": false
+  }
+}

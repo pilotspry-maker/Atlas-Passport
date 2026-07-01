@@ -1,0 +1,52 @@
+{
+  "_comment": "Canonical branch protection config for main. Applied by scripts/ops/apply-branch-protection.sh and audited by .github/workflows/branch-protection-audit.yml. See docs/ops/branch_protection_plan.md. Do not edit without a PR reviewed by @pilotspry-maker (enforced via CODEOWNERS).",
+  "_version": "1.0",
+  "_generated_at": "2026-07-01",
+  "branch": "main",
+  "protection": {
+    "required_status_checks": {
+      "strict": true,
+      "contexts": [
+        "Verify required env vars in Vercel",
+        "Lint · Build · Bundle Size",
+        "RLS Regression Tests (reg-01 → reg-04)",
+        "RLS Exploit Tests"
+      ]
+    },
+    "enforce_admins": true,
+    "required_pull_request_reviews": {
+      "dismiss_stale_reviews": true,
+      "require_code_owner_reviews": true,
+      "required_approving_review_count": 1,
+      "require_last_push_approval": true
+    },
+    "restrictions": {
+      "users": ["pilotspry-maker"],
+      "teams": [],
+      "apps": []
+    },
+    "required_linear_history": true,
+    "allow_force_pushes": false,
+    "allow_deletions": false,
+    "required_conversation_resolution": true,
+    "lock_branch": false,
+    "allow_fork_syncing": false,
+    "block_creations": false,
+    "required_signatures": false
+  },
+  "repo_settings": {
+    "allow_squash_merge": true,
+    "allow_merge_commit": false,
+    "allow_rebase_merge": false,
+    "allow_auto_merge": false,
+    "delete_branch_on_merge": true
+  },
+  "actions_permissions": {
+    "_note": "Move from allowed_actions=all to selected + allowlist in Phase 2.",
+    "target_state": {
+      "enabled": true,
+      "allowed_actions": "selected",
+      "sha_pinning_required": true
+    }
+  }
+}
