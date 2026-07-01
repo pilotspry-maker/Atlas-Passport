@@ -185,6 +185,15 @@ CRON_SECRET=<openssl rand -hex 32>               # server-only
 
 **GitHub Actions secrets:** `SUPABASE_SERVICE_ROLE_KEY` must also be present as a repo Actions secret with the **current** service_role JWT, or CI will fail with auth errors. Rotate the GitHub Actions value any time Supabase rotates the key. **A stale GitHub Actions value is the leading cause of red CI on this repo** (June 27, 2026 incident).
 
+**Additional Actions-only secrets** (not app env vars — never set in Vercel; used only by workflows in `.github/workflows/`):
+
+| Secret | Used by | Notes |
+|---|---|---|
+| `SUPABASE_DB_URL` | `rls-inv4-check.yml`, `rls-drift-watch.yml` | Direct Postgres URL using the `rls_verifier` role (login + `USAGE` on `pg_catalog` only — no data grants). Role created 2026-07-01. Never reuse the `postgres` superuser DSN here. |
+| `SLACK_WEBHOOK_URL` | `rls-inv4-check.yml`, `rls-drift-watch.yml`, `resend-key-audit.yml` | Incoming Webhook scoped to `#launch-ops`. Workflows silently no-op if this is missing rather than failing red. |
+
+These two are Actions secrets only — do not add them to `.env.local`, Vercel, or the 7-var app list above. The app never reads them.
+
 ---
 
 ## 6. Database — Migration State
@@ -236,8 +245,10 @@ Apply in order via Supabase SQL Editor or CLI. All migrations are idempotent.
 | 040 | `040_covering_fk_indexes.sql` | Task 7: add 11 covering indexes on unindexed FK columns (`passports.corridor_id`, `check_ins.node_id`, `rewards.corridor_id`, Orion event tables) to eliminate sequential scans on CASCADE and JOIN queries (Supabase advisor `unindexed_foreign_keys`) | ✅ applied (2026-06-29, PR #53) |
 | 041 | `041_restore_public_stats_anon_execute.sql` | Restore anon/authenticated EXECUTE on `get_public_stats()` — migration 034 erroneously revoked it, breaking the public dashboard (`public_stats` view is SECURITY INVOKER and calls the RPC internally) | ✅ applied (2026-06-30, PR #65) |
 | 042 | `042_passports_update_guard.sql` | Add explicit `passports_update_own` UPDATE policy for authenticated users — locks user_id, corridor_id, expires_at, and activated_at as immutable; blocks anon/public UPDATE entirely (the 2026-06-29 exploit class) | ✅ applied (2026-06-30, PR #83) |
+| 043 | `043_passports_update_guard_full_immutables.sql` | Widen `committed_passport_immutables(uuid)` helper + `passports_update_own` WITH CHECK to pin all **8** immutable-under-authenticated-PATCH fields (see §7); closes state-mutation gap left by 042 (status/completed_at/warning_sent_at/reward_claimed were not pinned) | ✅ applied (2026-06-30, PR #85) |
+| 044 | `044_advisor_hardening_view_invoker_and_admin_revoke.sql` | Advisor hardening: `ALTER VIEW check_ins_player_view SET (security_invoker=true, security_barrier=true)` (closes advisor ERROR `security_definer_view`); `REVOKE EXECUTE ... FROM anon` on `committed_is_admin(uuid)` (closes advisor WARN `anon_security_definer_function_executable`); DO-block verifies both post-apply | ✅ applied (2026-07-01, PR #86) |
 
-**Status as of 2026-06-30:** All migrations 001–042 are applied to production, verified by direct introspection of `pg_proc`, `pg_policies`, `pg_trigger`, `information_schema.columns`, and `has_function_privilege(service_role, ...)` against project `gaavynmmysdhovpatzlp`. The 2026-06-27 → 2026-06-29 launch-protection sweep applied 018–036; PR #53 (2026-06-29) added 037–040; PR #65 added 041; PR #83 added 042. Migrations 004–5, 007, 009–10, 013–17 were marked PENDING in earlier revisions of this document but were already live — the markers were stale, not the migrations.
+**Status as of 2026-07-01:** All migrations 001–044 are applied to production, verified by direct introspection of `pg_proc`, `pg_policies`, `pg_trigger`, `information_schema.columns`, `pg_class.reloptions`, and `has_function_privilege(service_role, ...)` against project `gaavynmmysdhovpatzlp`. The 2026-06-27 → 2026-06-29 launch-protection sweep applied 018–036; PR #53 (2026-06-29) added 037–040; PR #65 added 041; PR #83 added 042; PR #85 added 043; PR #86 added 044 (advisor hardening — cleared 2 of 3 findings; the third, `auth_leaked_password_protection`, is a dashboard toggle). Migrations 004–5, 007, 009–10, 013–17 were marked PENDING in earlier revisions of this document but were already live — the markers were stale, not the migrations.
 
 **Sentinel checks** to verify post-apply:
 - `POST /rpc/create_test_users` → 200
@@ -253,7 +264,7 @@ Apply in order via Supabase SQL Editor or CLI. All migrations are idempotent.
 
 ## 7. Security Posture & RLS Rules
 
-RLS is the launch gate. The June 23 audit found 5 of 6 exploit categories live; PR #18 fixes them. Until migrations 004–008 are applied, **assume the production DB is exploitable.**
+RLS is the launch gate. The June 23 audit found 5 of 6 exploit categories live; PR #18 fixed them. All migrations 001–044 are applied to production as of 2026-07-01 — **the previous "assume the DB is exploitable" caveat is closed.**
 
 ### Public read tables (anon SELECT allowed)
 - `corridors` (active rows)
@@ -262,20 +273,57 @@ RLS is the launch gate. The June 23 audit found 5 of 6 exploit categories live; 
 ### Private tables (anon SELECT must return `[]`)
 - `profiles`, `passports`, `check_ins`, `rewards`
 
-### Required policies (from PR #18)
+### Required policies
 
 | Table | Policy | Critical clause |
 |---|---|---|
-| `profiles` | `profiles_update_own` | `WITH CHECK (auth.uid()=id AND is_admin=(SELECT is_admin FROM profiles WHERE id=auth.uid()))` — freezes is_admin |
+| `profiles` | `profiles_update_own` | `WITH CHECK (auth.uid()=id AND is_admin = public.committed_is_admin(auth.uid()))` — freezes is_admin via SECURITY DEFINER helper (migration 035, hardened by 039, anon EXECUTE revoked by 044) |
 | `check_ins` | `check_ins_insert_own` | `EXISTS(... passports p WHERE p.id=passport_id AND p.user_id=auth.uid() AND p.status='active')` — ownership + active gate |
 | `passports` | `passports_insert_own` | `EXISTS(... corridors c WHERE c.id=corridor_id AND c.is_active=TRUE)` — active corridor gate |
-| `rewards` | `prevent_reward_unclaim` trigger | blocks `claimed: true → false` |
+| `passports` | `passports_update_own` | `WITH CHECK` pins all **8 immutable fields** (see below) via `public.committed_passport_immutables(id)` SECURITY DEFINER helper (migrations 042 → 043) |
+| `passports` | `prevent_reward_unclaim` trigger | blocks `reward_claimed: true → false` (migration 005) |
+| `check_ins_player_view` | view options | `security_invoker=true, security_barrier=true` — RLS on `check_ins` enforced as the caller, not the view owner (migration 044) |
+
+### Immutable fields on `passports` (authenticated PATCH)
+
+Migration 043 pins these **8 fields** as immutable under any authenticated UPDATE. The `passports_update_own` policy's `WITH CHECK` clause compares each `NEW.<field>` against the committed row via `public.committed_passport_immutables(passports.id)` (SECURITY DEFINER, locked `search_path=''`):
+
+1. `user_id`
+2. `corridor_id`
+3. `activated_at`
+4. `expires_at`
+5. `status`
+6. `completed_at`
+7. `warning_sent_at`
+8. `reward_claimed`
+
+Any authenticated PATCH that changes any of these 8 fails the policy check and returns 403 / 42501. Service role bypasses RLS and can still write these fields via server-side routes. Migration 042 originally pinned only the first 4; migration 043 widened the helper to cover all 8 (state fields were the exploit gap).
+
+### SECURITY DEFINER helpers (grants pinned)
+
+All admin/immutability helpers use SECURITY DEFINER with `search_path=''` to prevent Pattern D escalation. EXECUTE grants:
+
+| Function | anon | authenticated | service_role |
+|---|---|---|---|
+| `committed_is_admin(uuid)` | ❌ (revoked 044) | ✅ | ✅ |
+| `current_user_is_admin()` | ❌ | ✅ | ✅ |
+| `committed_passport_immutables(uuid)` | ❌ | ✅ | ✅ |
+| `get_public_stats()` | ✅ (intentional — powers public dashboard, migration 041) | ✅ | ✅ |
 
 ### Behavioral assertions (probes that must all pass)
 - `PATCH /profiles {"is_admin": true}` as anon → **403** (not 204).
+- `PATCH /profiles {"is_admin": true}` as authenticated (non-admin self) → **403** / 42501.
 - Authenticated `INSERT check_ins` against foreign `passport_id` → **403**.
 - `INSERT passport` on `is_active=false` corridor → **403**.
 - `INSERT check_in` on `status!='active'` passport → **403**.
+- Authenticated `PATCH /passports` mutating **any** of the 8 immutable fields → **403** / 42501.
+- Anon call to `/rest/v1/rpc/committed_is_admin` → **403** (EXECUTE revoked 044).
+
+### Advisor sweep — status as of 2026-07-01
+- `security_definer_view` (ERROR) on `check_ins_player_view` → **cleared** by 044
+- `anon_security_definer_function_executable` (WARN) on `committed_is_admin` → **cleared** by 044
+- `auth_leaked_password_protection` (WARN) — dashboard toggle, pending manual enable
+- `get_public_stats` anon EXECUTE (WARN) — **intentional**, powers public dashboard (see #68 / migration 041). Do not revoke.
 
 ---
 
