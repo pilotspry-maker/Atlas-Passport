@@ -1,0 +1,66 @@
+# .github/workflows/rls-inv4-check.yml
+# Weekday 08:00 America/New_York standalone INV-4 check for public.passports UPDATE policies.
+# Posts to #launch-ops Slack ONLY when invariants are violated; silent on green.
+# Advisory/monitoring only — NOT a required merge-gate status check.
+#
+# Independent of PR #84 (rls-drift-watch) which covers a broader set of invariants.
+# This workflow does one job well: passports UPDATE policy shape.
+#
+# Required secrets (Settings → Secrets and variables → Actions):
+#   SUPABASE_DB_URL   — direct Postgres connection for rls_verifier role
+#   SLACK_WEBHOOK_URL — Slack Incoming Webhook for #launch-ops
+name: RLS INV-4 Check
+
+on:
+  schedule:
+    # 08:00 America/New_York (EDT = UTC-4).
+    # DST note: change to "0 13 * * 1-5" when EST (UTC-5) resumes late October 2026.
+    # Matches CLAUDE.md §11.3 pattern for cron 84869e59.
+    - cron: "0 12 * * 1-5"
+  workflow_dispatch: {}
+
+concurrency:
+  group: rls-inv4-check
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  inv4-check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Verify required secrets present
+        env:
+          SUPABASE_DB_URL: ${{ secrets.SUPABASE_DB_URL }}
+          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+        run: |
+          if [ -z "${SUPABASE_DB_URL:-}" ]; then
+            echo "::error::SUPABASE_DB_URL is not set — add it under Settings → Secrets and variables → Actions"
+            exit 1
+          fi
+          if [ -z "${SLACK_WEBHOOK_URL:-}" ]; then
+            echo "::error::SLACK_WEBHOOK_URL is not set — add it under Settings → Secrets and variables → Actions"
+            exit 1
+          fi
+
+      - name: Install postgresql-client
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends postgresql-client
+
+      - name: Run INV-4 check
+        env:
+          SUPABASE_DB_URL: ${{ secrets.SUPABASE_DB_URL }}
+          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+          GITHUB_SERVER_URL: ${{ github.server_url }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+          GITHUB_RUN_ID: ${{ github.run_id }}
+        run: |
+          chmod +x scripts/rls_inv4_check.sh
+          scripts/rls_inv4_check.sh
