@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# scripts/rls_drift_watch.sh — weekday RLS-drift watch
+# scripts/rls_drift_watch.sh â weekday RLS-drift watch
 # Called by .github/workflows/rls-drift-watch.yml
 # Required env: SUPABASE_DB_URL, SLACK_WEBHOOK_URL, GH_TOKEN
 set -euo pipefail
@@ -9,13 +9,13 @@ SOURCE_THREAD="https://www.perplexity.ai/computer/tasks/ce8f2629-9d75-42fa-ba38-
 
 redacted_url() { printf '%s' "$1" | sed -E 's#(://[^:]+:)[^@]+@#\1****@#'; }
 
-echo "── RLS drift watch — $(date -u +%FT%TZ) ──"
+echo "ââ RLS drift watch â $(date -u +%FT%TZ) ââ"
 echo "DB target: $(redacted_url "$SUPABASE_DB_URL")"
 
 findings=()
 has_critical=false
 
-# ── CHECK 1: Main-branch RLS workflow run status ────────────────────────────
+# ââ CHECK 1: Main-branch RLS workflow run status ââââââââââââââââââââââââââââ
 echo ""
 echo "CHECK 1: Main-branch RLS workflow run status"
 
@@ -24,7 +24,7 @@ runs_json=$(gh run list \
   --branch main \
   -L 20 \
   --json databaseId,name,event,status,conclusion,headSha,url 2>&1) || {
-  findings+=("CHECK1 ERROR: gh run list failed — ${runs_json:-unknown error}")
+  findings+=("CHECK1 ERROR: gh run list failed â ${runs_json:-unknown error}")
   runs_json='[]'
 }
 
@@ -56,9 +56,9 @@ while IFS= read -r run; do
           | cut -c1-400 || true)
       fi
       if [[ -n "$log_excerpt" ]]; then
-        findings+=("CHECK1 *${name}*: last run \`${conclusion}\` — <${url}|view run> — \`${log_excerpt}\`")
+        findings+=("CHECK1 *${name}*: last run \`${conclusion}\` â <${url}|view run> â \`${log_excerpt}\`")
       else
-        findings+=("CHECK1 *${name}*: last run \`${conclusion}\` — <${url}|view run>")
+        findings+=("CHECK1 *${name}*: last run \`${conclusion}\` â <${url}|view run>")
       fi
       ;;
   esac
@@ -67,7 +67,7 @@ done < <(printf '%s' "$runs_json" \
 
 echo "CHECK 1 done (${#findings[@]} finding(s) so far)"
 
-# ── CHECK 2: Policy-definition drift via psql ──────────────────────────────
+# ââ CHECK 2: Policy-definition drift via psql âââââââââââââââââââââââââââââ
 echo ""
 echo "CHECK 2: Policy-definition drift"
 
@@ -81,11 +81,11 @@ psql_out=$(psql "$SUPABASE_DB_URL" -At -F'|' -c "
      or (schemaname='storage' and tablename='objects'
          and policyname ilike '%corridor_covers%')
   order by schemaname, tablename, cmd, policyname;" 2>&1) || {
-  findings+=("CHECK2 ERROR: psql query failed — $(printf '%s' "$psql_out" | head -c 300)")
+  findings+=("CHECK2 ERROR: psql query failed â $(printf '%s' "$psql_out" | head -c 300)")
   psql_out=""
 }
 
-declare -A inv5_service_seen  # key=tablename → 1 when service_role ALL policy seen
+declare -A inv5_service_seen  # key=tablename â 1 when service_role ALL policy seen
 
 while IFS='|' read -r schema tbl policy cmd roles qual with_check; do
   [[ -z "$schema" ]] && continue
@@ -114,11 +114,11 @@ while IFS='|' read -r schema tbl policy cmd roles qual with_check; do
       fi
       ;;
 
-    # INV-3: waitlist_entries INSERT — roles={anon}, with_check must not be bare 'true'
+    # INV-3: waitlist_entries INSERT â roles={anon}, with_check must not be bare 'true'
     public.waitlist_entries)
       if [[ "$cmd" == "INSERT" ]]; then
         if [[ "$roles" != "{anon}" || "$with_check" == "true" ]]; then
-          findings+=("INV-3 *waitlist_entries* INSERT \`${policy}\`: unexpected shape — roles=${roles} with_check=${with_check:0:80}")
+          findings+=("INV-3 *waitlist_entries* INSERT \`${policy}\`: unexpected shape â roles=${roles} with_check=${with_check:0:80}")
         fi
       elif [[ "$cmd" == "UPDATE" || "$cmd" == "DELETE" ]]; then
         findings+=("INV-3 *waitlist_entries* unexpected ${cmd} policy \`${policy}\`")
@@ -129,7 +129,7 @@ while IFS='|' read -r schema tbl policy cmd roles qual with_check; do
     public.passports)
       if [[ "$cmd" == "UPDATE" ]]; then
         if [[ "$roles" != "{authenticated}" && "$roles" != "{service_role}" ]]; then
-          findings+=("CRITICAL INV-4 *passports* UPDATE \`${policy}\`: anon/public UPDATE — roles=${roles}")
+          findings+=("CRITICAL INV-4 *passports* UPDATE \`${policy}\`: anon/public UPDATE â roles=${roles}")
           has_critical=true
         elif [[ "$roles" == "{authenticated}" ]]; then
           # qual + with_check must both reference user_id and auth.uid
@@ -147,7 +147,7 @@ while IFS='|' read -r schema tbl policy cmd roles qual with_check; do
       fi
       ;;
 
-    # INV-5: corridor.audit_log + corridor.jobs need ≥1 service_role ALL; non-service_role = deviation
+    # INV-5: corridor.audit_log + corridor.jobs need â¥1 service_role ALL; non-service_role = deviation
     corridor.audit_log|corridor.jobs)
       if [[ "$cmd" == "ALL" && "$roles" == "{service_role}" ]]; then
         inv5_service_seen["$tbl"]=1
@@ -156,7 +156,7 @@ while IFS='|' read -r schema tbl policy cmd roles qual with_check; do
       fi
       ;;
 
-    # INV-6: storage.objects corridor-covers — no list policy
+    # INV-6: storage.objects corridor-covers â no list policy
     storage.objects)
       if printf '%s' "$policy" | grep -qi 'list'; then
         findings+=("INV-6 *corridor-covers* bucket listing policy detected: \`${policy}\`")
@@ -165,16 +165,16 @@ while IFS='|' read -r schema tbl policy cmd roles qual with_check; do
   esac
 done <<< "$psql_out"
 
-# INV-5 coverage check — both corridor tables must have a service_role ALL policy
+# INV-5 coverage check â both corridor tables must have a service_role ALL policy
 for tbl in audit_log jobs; do
   if [[ -z "${inv5_service_seen[$tbl]+set}" ]]; then
-    findings+=("INV-5 *corridor.${tbl}*: no service_role ALL policy found — deny coverage missing")
+    findings+=("INV-5 *corridor.${tbl}*: no service_role ALL policy found â deny coverage missing")
   fi
 done
 
 echo "CHECK 2 done (${#findings[@]} finding(s) so far)"
 
-# ── CHECK 3: Unknown new policynames on monitored tables ────────────────────
+# ââ CHECK 3: Unknown new policynames on monitored tables ââââââââââââââââââââ
 echo ""
 echo "CHECK 3: Unknown policyname patterns"
 
@@ -184,13 +184,13 @@ known_pattern='^(service_role_inserts_|passports_update_own$|passports_.*_servic
 while IFS='|' read -r schema tbl policy cmd roles qual with_check; do
   [[ -z "$schema" || -z "$policy" ]] && continue
   if ! printf '%s' "$policy" | grep -qiE "$known_pattern"; then
-    findings+=("CHECK3 *${schema}.${tbl}*: unknown policy \`${policy}\` (cmd=${cmd} roles=${roles}) — operator review needed")
+    findings+=("CHECK3 *${schema}.${tbl}*: unknown policy \`${policy}\` (cmd=${cmd} roles=${roles}) â operator review needed")
   fi
 done <<< "$psql_out"
 
-echo "CHECK 3 done — ${#findings[@]} total finding(s)"
+echo "CHECK 3 done â ${#findings[@]} total finding(s)"
 
-# ── Silent exit if clean ─────────────────────────────────────────────────────
+# ââ Silent exit if clean âââââââââââââââââââââââââââââââââââââââââââââââââââââ
 if [[ ${#findings[@]} -eq 0 ]]; then
   echo ""
   echo "No deviations detected. Exiting silently."
@@ -201,43 +201,45 @@ echo ""
 echo "Deviations detected: ${#findings[@]}"
 printf '  - %s\n' "${findings[@]}"
 
-# ── Build Slack payload ──────────────────────────────────────────────────────
-date_str=$(date -u +%F)
-header_text="Atlas Passport RLS drift — ${date_str}"
-[[ "$has_critical" == "true" ]] && header_text=":rotating_light: CRITICAL — ${header_text}"
+# ââ Build Slack payload ââââââââââââââââââââââââââââââââââââââââââââââââââââââ
+if [ -n "${SLACK_WEBHOOK_URL:-}" ]; then
+  date_str=$(date -u +%F)
+  header_text="Atlas Passport RLS drift â ${date_str}"
+  [[ "$has_critical" == "true" ]] && header_text=":rotating_light: CRITICAL â ${header_text}"
 
-body=$(printf '• %s\n' "${findings[@]}")
+  body=$(printf 'â¢ %s\n' "${findings[@]}")
 
-payload=$(jq -n -c \
-  --arg fallback "Atlas Passport RLS drift — ${date_str}: ${#findings[@]} deviation(s)" \
-  --arg header "$header_text" \
-  --arg body "$body" \
-  --arg sop "$SOURCE_THREAD" \
-  '{
-    text: $fallback,
-    blocks: [
-      {type: "header", text: {type: "plain_text", text: $header, emoji: true}},
-      {type: "section", text: {type: "mrkdwn", text: $body}},
-      {type: "context", elements: [
-        {type: "mrkdwn",
-         text: ("Standing SOP: `docs/LAUNCH_STABILITY.md` §1 · <" + $sop + "|Source thread>")}
-      ]}
-    ]
-  }')
+  payload=$(jq -n -c \
+    --arg fallback "Atlas Passport RLS drift â ${date_str}: ${#findings[@]} deviation(s)" \
+    --arg header "$header_text" \
+    --arg body "$body" \
+    --arg sop "$SOURCE_THREAD" \
+    '{
+      text: $fallback,
+      blocks: [
+        {type: "header", text: {type: "plain_text", text: $header, emoji: true}},
+        {type: "section", text: {type: "mrkdwn", text: $body}},
+        {type: "context", elements: [
+          {type: "mrkdwn",
+           text: ("Standing SOP: `docs/LAUNCH_STABILITY.md` Â§1 Â· <" + $sop + "|Source thread>")}
+        ]}
+      ]
+    }')
 
-http_code=$(curl -sS -o /tmp/slack.out -w '%{http_code}' \
-  -X POST -H 'Content-Type: application/json' \
-  --data-binary "$payload" "$SLACK_WEBHOOK_URL")
+  http_code=$(curl -sS -o /tmp/slack.out -w '%{http_code}' \
+    -X POST -H 'Content-Type: application/json' \
+    --data-binary "$payload" "$SLACK_WEBHOOK_URL")
 
-if [[ "$http_code" != "200" ]]; then
-  echo "::error::Slack post failed: HTTP ${http_code}"
-  cat /tmp/slack.out
-  exit 1
+  if [[ "$http_code" != "200" ]]; then
+    echo "::error::Slack post failed: HTTP ${http_code}"
+    cat /tmp/slack.out
+    exit 1
+  fi
+
+  echo "Slack post OK (HTTP ${http_code})"
 fi
 
-echo "Slack post OK (HTTP ${http_code})"
-
 if [[ "$has_critical" == "true" ]]; then
-  echo "::error::Critical RLS deviation detected — INV-4 anon/public UPDATE on passports"
+  echo "::error::Critical RLS deviation detected â INV-4 anon/public UPDATE on passports"
   exit 1
 fi
